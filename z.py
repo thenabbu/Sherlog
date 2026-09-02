@@ -187,6 +187,39 @@ BM_METRICS = {
     "avg_case_closure_hrs": "Avg case closure (h)",
 }
 
+BM_METRIC_GUIDE = {
+    "alert_volume": {
+        "definition": "Number of alerts attributed to each entity in this assessment cycle.",
+        "read": "Lower is not automatically better; compare entities with similar operating scope.",
+        "unit": "alerts",
+    },
+    "risk_score": {
+        "definition": "Composite supervisory risk score produced by the scoring pipeline.",
+        "read": "Higher means greater supervisory risk and deserves closer review.",
+        "unit": "score",
+    },
+    "escalation_rate": {
+        "definition": "Share of alerts that were escalated (shown as a proportion).",
+        "read": "A large difference from peers is a prompt to investigate process and severity mix.",
+        "unit": "percent",
+    },
+    "ack_rate": {
+        "definition": "Share of alerts with a recorded first acknowledgement.",
+        "read": "Higher generally indicates more alerts were acknowledged; interpret with workload and SLA context.",
+        "unit": "percent",
+    },
+    "closure_rate": {
+        "definition": "Share of alerts that have a recorded closure.",
+        "read": "Higher means more alerts are closed in this cycle; it does not measure closure quality.",
+        "unit": "percent",
+    },
+    "avg_case_closure_hrs": {
+        "definition": "Average elapsed time, in hours, for cases that have been closed.",
+        "read": "Lower is faster, but unusually fast closure can warrant investigation when quality controls are weak.",
+        "unit": "hours",
+    },
+}
+
 # version gate ---------------------------------------------------------------
 try:
     from packaging.version import Version
@@ -536,21 +569,25 @@ def alert_aggregates(run_dir: str) -> pd.DataFrame:
             _coerce_datetime_columns(b, ["created_at", "first_ack_at", "closed_at"])
             e = b["entity_id"].astype(str)
             for eid, n in e.value_counts().items():
-                acc.setdefault(eid, {})["alerts"] = acc[eid].get("alerts", 0) + int(n)
+                a = acc.setdefault(str(eid), {})
+                a["alerts"] = a.get("alerts", 0) + int(n)
             if "closed_at" in b and "created_at" in b:
                 m = b["closed_at"].notna()
                 if m.any():
                     dur = (b.loc[m, "closed_at"] - b.loc[m, "created_at"]).dt.total_seconds() / 60.0
                     dur = dur.clip(lower=0)
                     for eid, s in dur.groupby(e[m]).sum().items():
-                        acc.setdefault(eid, {})["closure_min"] = acc[eid].get("closure_min", 0.0) + float(s)
+                        a = acc.setdefault(str(eid), {})
+                        a["closure_min"] = a.get("closure_min", 0.0) + float(s)
                     for eid, n in e[m].value_counts().items():
-                        acc.setdefault(eid, {})["closed"] = acc[eid].get("closed", 0) + int(n)
+                        a = acc.setdefault(str(eid), {})
+                        a["closed"] = a.get("closed", 0) + int(n)
             if "first_ack_at" in b:
                 m = b["first_ack_at"].notna()
                 if m.any():
                     for eid, n in e[m].value_counts().items():
-                        acc.setdefault(eid, {})["acked"] = acc[eid].get("acked", 0) + int(n)
+                        a = acc.setdefault(str(eid), {})
+                        a["acked"] = a.get("acked", 0) + int(n)
             if "escalated" in b:
                 esc_col = b["escalated"]
                 if esc_col.dtype == bool:
@@ -559,13 +596,15 @@ def alert_aggregates(run_dir: str) -> pd.DataFrame:
                     m = esc_col.astype(str).str.lower().isin(["true", "1"])
                 if m.any():
                     for eid, n in e[m].value_counts().items():
-                        acc.setdefault(eid, {})["escalated"] = acc[eid].get("escalated", 0) + int(n)
+                        a = acc.setdefault(str(eid), {})
+                        a["escalated"] = a.get("escalated", 0) + int(n)
             if "disposition" in b:
                 for val, field in (("unresolved", "unresolved"), ("true_positive", "true_positive")):
                     m = b["disposition"] == val
                     if m.any():
                         for eid, n in e[m].value_counts().items():
-                            acc.setdefault(eid, {})[field] = acc[eid].get(field, 0) + int(n)
+                            a = acc.setdefault(str(eid), {})
+                            a[field] = a.get(field, 0) + int(n)
     except Exception:
         return pd.DataFrame()
     rows = []
@@ -2035,10 +2074,21 @@ def render_benchmark_page(run_dir: str):
     pg = st.selectbox("Peer group", groups, index=default_gi, key="bm_group")
     metric = st.selectbox("Metric", list(BM_METRICS), format_func=lambda k: BM_METRICS[k],
                           key="bm_metric")
+    guide = BM_METRIC_GUIDE[metric]
+    metric_display = BM_METRICS[metric] + (" (%)" if guide["unit"] == "percent" else "")
+    with st.expander("What this chart means", expanded=True):
+        st.write(guide["definition"])
+        st.caption(guide["read"])
+        st.caption("The box shows the middle 50% of the selected peer group; the line inside is its median. "
+                   "The red marker is the focus entity. Missing observations are excluded from the chart.")
     sub = m[m["peer_group"] == pg].copy()
     if sub.empty or metric not in sub.columns:
         st.caption("No data for this peer group / metric.")
         return
+    # Keep cohort rows for the table, but ensure the metric is numeric. Some
+    # aggregates intentionally return None when there is no denominator (for
+    # example, no closed cases); object-typed None values cannot be rounded.
+    sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
     sub2 = sub.dropna(subset=[metric])
     focus_opts = list(sub["entity_id"])
     default_fi = 0
@@ -2059,11 +2109,13 @@ def render_benchmark_page(run_dir: str):
                 fig.add_trace(plotly_go.Scatter(y=[fval], mode="markers", name=str(focus),
                                          marker=dict(color="#c0392b", size=13)))
             fig.update_layout(height=380, margin=dict(l=10, r=10, t=20, b=10),
-                              showlegend=False, yaxis_title=BM_METRICS[metric])
+                              showlegend=False, yaxis_title=metric_display,
+                              yaxis=dict(tickformat=".0%" if guide["unit"] == "percent" else None))
             _st_chart(st.plotly_chart, fig)
         elif ALTAIR:
             box = alt.Chart(sub2).mark_boxplot(outliers=True).encode(
-                y=alt.Y(metric, scale=alt.Scale(zero=False), title=BM_METRICS[metric]))
+                y=alt.Y(metric, scale=alt.Scale(zero=False), title=metric_display,
+                        axis=alt.Axis(format=".0%") if guide["unit"] == "percent" else alt.Axis()))
             layers = box
             if fval is not None:
                 pt = alt.Chart(pd.DataFrame({metric: [fval]})).mark_point(
@@ -2077,14 +2129,18 @@ def render_benchmark_page(run_dir: str):
     ranked["percentile"] = (ranked[metric].rank(pct=True, method="average") * 100).round(0)
     ranked["_focus"] = ["focus" if x == focus else "" for x in ranked["entity_id"]]
     ranked = ranked.sort_values(metric, ascending=False)
+    display_metric = ranked[metric] * 100 if guide["unit"] == "percent" else ranked[metric]
     disp = pd.DataFrame({
         "Entity": ranked["entity"] + " (" + ranked["entity_id"] + ")",
-        BM_METRICS[metric]: ranked[metric].round(3),
+        metric_display: display_metric.round(1 if guide["unit"] == "percent" else 3),
         "Percentile": ranked["percentile"],
         "Focus": ranked["_focus"],
     })
     ids = list(ranked["entity_id"])
-    st.caption("Percentile = average-tie rank within the peer group (peer module contract).")
+    missing_count = int(ranked[metric].isna().sum())
+    st.caption("Percentile = average-tie rank within the peer group (peer module contract). "
+               + (f"{missing_count} entity/entities have no usable value and are shown as missing."
+                  if missing_count else "All entities have a usable value."))
     ev = show_table(disp, hide_index=True, key="bm_tbl", on_select="rerun",
                     selection_mode="single-row")
     rows = ev.selection.rows if (ev and hasattr(ev, "selection")) else []

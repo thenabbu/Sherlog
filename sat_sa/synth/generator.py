@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -50,6 +51,7 @@ def generate(n_entities: int = 25, alerts_per_entity: int = 400, seed: int = 42,
     alert_number = 0
     for entity_idx in range(n_entities):
         entity_id = f"CSE-{entity_idx + 1:03d}"
+        case_id = f"CASE-{entity_idx + 1:03d}"
         peer_group = "finserv-tier2" if entity_idx % 2 == 0 else "energy-tier2"
         entities.append({"entity_id": entity_id, "name": f"Synthetic CSE {entity_idx + 1}", "peer_group": peer_group, "sector": "financial" if entity_idx % 2 == 0 else "energy"})
         own_assets = []
@@ -60,6 +62,7 @@ def generate(n_entities: int = 25, alerts_per_entity: int = 400, seed: int = 42,
             assets.append(asset); own_assets.append(asset)
         low_asset = own_assets[0]["asset_id"]
         candidates = [asset["asset_id"] for asset in own_assets if not (entity_idx in pools["low_coverage"] and asset["asset_id"] == low_asset)]
+        first_alert = None
         for _ in range(alerts_per_entity):
             alert_number += 1
             created = reference - timedelta(minutes=int(rng.integers(0, 29 * 24 * 60)))
@@ -72,9 +75,18 @@ def generate(n_entities: int = 25, alerts_per_entity: int = 400, seed: int = 42,
             # precise, known negative population for the no-escalation detector.
             escalated = bool(severity == "critical" and disposition == "true_positive")
             alert_id = f"AL-{alert_number:06d}"
-            alerts.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": rng.choice(candidates).item(), "category": rng.choice(["malware", "intrusion", "phishing", "DoS"]).item(),
+            alert = {"alert_id": alert_id, "entity_id": entity_id, "asset_id": rng.choice(candidates).item(), "category": rng.choice(["malware", "intrusion", "phishing", "DoS"]).item(),
                 "severity": severity, "created_at": created.isoformat(), "first_ack_at": (created + timedelta(minutes=5)).isoformat(), "closed_at": (created + timedelta(minutes=duration)).isoformat(),
-                "disposition": disposition, "escalated": escalated, "escalated_at": (created + timedelta(minutes=30)).isoformat() if escalated else None, "case_id": None})
+                "disposition": disposition, "escalated": escalated, "escalated_at": (created + timedelta(minutes=30)).isoformat() if escalated else None, "case_id": None}
+            if first_alert is None:
+                first_alert = alert
+                alert["case_id"] = case_id
+            alerts.append(alert)
+        cases.append({"case_id": case_id, "entity_id": entity_id,
+                      "opened_at": first_alert["created_at"],
+                      "closed_at": first_alert["closed_at"],
+                      "alert_ids": [first_alert["alert_id"]],
+                      "root_cause_documented": first_alert["disposition"] == "true_positive"})
         if entity_idx in pools["fast_closure"]:
             alert_number += 1; created = reference - timedelta(hours=1); alert_id = f"AL-{alert_number:06d}"
             alerts.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "intrusion", "severity": "high", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(minutes=2)).isoformat(), "disposition": "true_positive", "escalated": True, "escalated_at": (created + timedelta(minutes=1)).isoformat(), "case_id": None})
@@ -121,6 +133,7 @@ def write_synthetic(
     pools = {detector: set(rng.choice(np.arange(n_entities), size=anomaly_count, replace=False)) for detector in ("fast_closure", "no_escalation", "low_coverage")}
     entities: list[dict] = []
     assets: list[dict] = []
+    cases: list[dict] = []
     truth: list[dict] = []
     alert_writer = _BatchWriter(destination, "alerts")
     alert_number = 0
@@ -129,6 +142,7 @@ def write_synthetic(
     try:
         for entity_idx in range(n_entities):
             entity_id = f"CSE-{entity_idx + 1:03d}"
+            case_id = f"CASE-{entity_idx + 1:03d}"
             entities.append({"entity_id": entity_id, "name": f"Synthetic CSE {entity_idx + 1}", "peer_group": "finserv-tier2" if entity_idx % 2 == 0 else "energy-tier2", "sector": "financial" if entity_idx % 2 == 0 else "energy"})
             own_assets = []
             for asset_idx in range(3):
@@ -137,6 +151,7 @@ def write_synthetic(
             low_asset = own_assets[0]["asset_id"]
             candidates = [asset["asset_id"] for asset in own_assets if not (entity_idx in pools["low_coverage"] and asset["asset_id"] == low_asset)]
             remaining = alerts_per_entity
+            first_alert = None
             while remaining:
                 size = min(current_batch_size, remaining)
                 rows = []
@@ -147,7 +162,11 @@ def write_synthetic(
                     duration = int(np.clip(rng.normal(480, 35), 420, 600)) if severity in {"high", "critical"} else int(rng.integers(60, 600))
                     disposition = rng.choice(["true_positive", "false_positive", "benign", "unresolved"], p=[.22, .35, .35, .08]).item()
                     escalated = bool(severity == "critical" and disposition == "true_positive")
-                    rows.append({"alert_id": f"AL-{alert_number:09d}", "entity_id": entity_id, "asset_id": rng.choice(candidates).item(), "category": rng.choice(["malware", "intrusion", "phishing", "DoS"]).item(), "severity": severity, "created_at": created.isoformat(), "first_ack_at": (created + timedelta(minutes=5)).isoformat(), "closed_at": (created + timedelta(minutes=duration)).isoformat(), "disposition": disposition, "escalated": escalated, "escalated_at": (created + timedelta(minutes=30)).isoformat() if escalated else None, "case_id": None})
+                    alert = {"alert_id": f"AL-{alert_number:09d}", "entity_id": entity_id, "asset_id": rng.choice(candidates).item(), "category": rng.choice(["malware", "intrusion", "phishing", "DoS"]).item(), "severity": severity, "created_at": created.isoformat(), "first_ack_at": (created + timedelta(minutes=5)).isoformat(), "closed_at": (created + timedelta(minutes=duration)).isoformat(), "disposition": disposition, "escalated": escalated, "escalated_at": (created + timedelta(minutes=30)).isoformat() if escalated else None, "case_id": None}
+                    if first_alert is None:
+                        first_alert = alert
+                        alert["case_id"] = case_id
+                    rows.append(alert)
                 alert_writer.write(pd.DataFrame(rows))
                 remaining -= size; written += size
                 if on_progress:
@@ -171,15 +190,23 @@ def write_synthetic(
                         current_batch_size = max(1, int(suggested_size))
             if entity_idx in pools["low_coverage"]:
                 truth.append({"detector": "low_coverage", "entity_id": entity_id, "alert_id": None, "asset_id": low_asset})
+            cases.append({"case_id": case_id, "entity_id": entity_id,
+                          "opened_at": first_alert["created_at"],
+                          "closed_at": first_alert["closed_at"],
+                          "alert_ids": [first_alert["alert_id"]],
+                          "root_cause_documented": first_alert["disposition"] == "true_positive"})
     finally:
         alert_writer.close()
     frames = {
         "entities": pd.DataFrame(entities), "assets": pd.DataFrame(assets),
-        "cases": pd.DataFrame(columns=["case_id", "entity_id", "opened_at", "closed_at", "alert_ids", "root_cause_documented"]),
+        "cases": pd.DataFrame(cases, columns=["case_id", "entity_id", "opened_at", "closed_at", "alert_ids", "root_cause_documented"]),
         "escalations": pd.DataFrame(columns=["escalation_id", "alert_id", "escalated_at", "escalated_to_tier"]),
         "ground_truth": pd.DataFrame(truth),
     }
     for name, frame in frames.items():
-        frame.to_csv(destination / f"{name}.csv", index=False)
+        csv_frame = frame.copy()
+        if name == "cases" and not csv_frame.empty:
+            csv_frame["alert_ids"] = csv_frame["alert_ids"].map(json.dumps)
+        csv_frame.to_csv(destination / f"{name}.csv", index=False)
         frame.to_parquet(destination / f"{name}.parquet", index=False)
     return {"alerts": written, "entities": n_entities}
