@@ -74,11 +74,17 @@ observed_count < coverage_threshold_pct × peer_median
 
 Default window is 30 days and default threshold is 0.25. A zero peer median cannot flag an asset.
 
+## 5. Schema-compatible supervisory detector extensions
+
+The detector registry also contains relationship, timing, recurrence, workload, and peer-activity signals. Execution-gap extensions cover acknowledged high-impact alerts whose linked cases lack root-cause evidence, unusually short case duration, true-positive closure without root cause, repeated alerts on an asset without root cause, low case coverage for high/critical true-positive workload, and high-severity true positives without escalation. Negative-space extensions cover critical assets with zero activity despite a positive peer baseline, high/critical alerts without matching cases, escalation claims without matching escalation records, and entity activity materially below its peer median.
+
+These rules use only the existing alert, case, escalation, asset, entity, and peer-group fields. Minimum peer-sample guards prevent small cohorts from producing findings, and zero activity is only meaningful when a positive comparison baseline exists. Investigation text, remediation, telemetry inventories, control claims, and expected detection categories remain future optional evidence sources and are never inferred from absent columns.
+
 ### Evidence and rationale
 
 Evidence contains asset ID, `window_days`, observed count, peer median, peer group, threshold, and reference window end. Rationale: `Critical asset {asset_id} generated {count} alerts in the last {window} days vs a peer median of {median} — possible monitoring gap.`
 
-## 5. Streaming detection implementation
+## 6. Streaming detection implementation
 
 Detection uses two scans of `alerts.parquet`.
 
@@ -87,7 +93,7 @@ Detection uses two scans of `alerts.parquet`.
 3. Run D3 after pass 2 from small aggregate counters and assets metadata; attach the corresponding asset source row.
 4. Renumber all flags globally as `fg_00001`, `fg_00002`, and so on in detector execution order.
 
-## 6. Generic peer benchmark function
+## 7. Generic peer benchmark function
 
 `benchmark(df, group_col, metric_col, peer_group_col)` MUST:
 

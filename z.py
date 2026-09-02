@@ -49,6 +49,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from sat_sa.detectors import DETECTOR_REGISTRY, GROUP_DETECTORS
 
 try:
     import pyarrow.parquet as pq
@@ -131,7 +132,7 @@ PAGES = {
     "how": "How it works",
 }
 
-FAMILY = {"fast_closure": "EG", "no_escalation": "EG", "low_coverage": "NS"}
+FAMILY = {key: meta["family"] for key, meta in DETECTOR_REGISTRY.items()}
 SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 SEV_COLOR = {"critical": "#922b21", "high": "#b9770e", "medium": "#9a7d0a", "low": "#1e8449"}
 FAM_COLOR = {"EG": "#21618c", "NS": "#6c3483"}
@@ -141,10 +142,15 @@ DEFAULT_DETECTOR_CONFIG = {
     "fast_closure_k": 1.5,
     "coverage_window_days": 30,
     "coverage_threshold_pct": 0.25,
-    "weights": {"fast_closure": 2, "no_escalation": 3, "low_coverage": 2},
+    "investigation_duration_k": 1.5,
+    "low_entity_activity_pct": 0.25,
+    "recurrence_min_alerts": 3,
+    "workload_deviation_pct": 0.5,
+    "min_peer_sample": 4,
+    "weights": {key: meta["weight"] for key, meta in DETECTOR_REGISTRY.items()},
 }
 
-RULE_META = {
+LEGACY_RULE_META = {
     "fast_closure": dict(
         rule="D1 · fast_closure",
         name="Unusually fast closure of high/critical alerts",
@@ -193,6 +199,10 @@ BM_METRICS = {
     "closure_rate": "Closure rate",
     "avg_case_closure_hrs": "Avg case closure (h)",
 }
+
+# Detector metadata is shared with the CLI; retain the legacy table above only
+# as a compatibility fallback for older cached/UI states.
+RULE_META = {**LEGACY_RULE_META, **DETECTOR_REGISTRY}
 
 BM_METRIC_GUIDE = {
     "alert_volume": {
@@ -342,9 +352,8 @@ def effective_detector_config(config_path: Path | None) -> tuple[dict, str]:
     source = "built-in defaults (no config file)"
     if config_path and config_path.exists() and YAML_OK:
         loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        config.update({key: loaded[key] for key in (
-            "fast_closure_k", "coverage_window_days", "coverage_threshold_pct"
-        ) if key in loaded})
+        config.update({key: loaded[key] for key in DEFAULT_DETECTOR_CONFIG
+                       if key != "weights" and key in loaded})
         config["weights"].update(loaded.get("weights") or {})
         source = str(config_path)
     return config, source
@@ -2381,11 +2390,26 @@ def render_detectors_page(run_dir: str | None):
     k = float(config.get("fast_closure_k", DEFAULT_DETECTOR_CONFIG["fast_closure_k"]))
     wd = int(config.get("coverage_window_days", DEFAULT_DETECTOR_CONFIG["coverage_window_days"]))
     tp = float(config.get("coverage_threshold_pct", DEFAULT_DETECTOR_CONFIG["coverage_threshold_pct"]))
+    ik = float(config.get("investigation_duration_k", DEFAULT_DETECTOR_CONFIG["investigation_duration_k"]))
+    le = float(config.get("low_entity_activity_pct", DEFAULT_DETECTOR_CONFIG["low_entity_activity_pct"]))
+    rm = int(config.get("recurrence_min_alerts", DEFAULT_DETECTOR_CONFIG["recurrence_min_alerts"]))
+    wdv = float(config.get("workload_deviation_pct", DEFAULT_DETECTOR_CONFIG["workload_deviation_pct"]))
+    mps = int(config.get("min_peer_sample", DEFAULT_DETECTOR_CONFIG["min_peer_sample"]))
     weights = {**DEFAULT_DETECTOR_CONFIG["weights"], **(config.get("weights") or {})}
     threshold = {
         "fast_closure": f"time_to_close < Q1 − {k:g} × IQR (severity-specific)",
         "no_escalation": "severity=critical ∧ disposition=true_positive ∧ escalated=false",
         "low_coverage": f"{wd}-day count < {tp:.0%} × peer median (critical assets)",
+        "ack_without_meaningful_investigation": "severity∈{high,critical} ∧ acknowledged ∧ case exists ∧ root_cause_documented=false",
+        "short_investigation": f"case duration < peer Q1 − {ik:g} × IQR (minimum {mps} peers)",
+        "investigation_closure_mismatch": "severity∈{high,critical} ∧ true_positive ∧ closed ∧ case.root_cause_documented=false",
+        "recurrence_without_root_cause": f"same entity+asset has ≥{rm} alerts with no documented root cause",
+        "workload_severity_mismatch": f"case/high-critical-TP ratio < peer median × (1 − {wdv:.0%})",
+        "high_risk_no_escalation": "severity=high ∧ disposition=true_positive ∧ escalated=false",
+        "critical_asset_no_telemetry": f"critical asset observed_count=0 ∧ positive peer baseline ({wd}-day window)",
+        "missing_investigation_evidence": "severity∈{high,critical} ∧ no matching case record",
+        "missing_escalation_evidence": "escalated=true ∧ no matching escalation record",
+        "low_entity_activity": f"entity alert count < {le:.0%} × peer median (minimum {mps} peers)",
     }
     st.caption(f"Configuration source: `{source}` · values are read-only")
 
@@ -2407,13 +2431,13 @@ def render_detectors_page(run_dir: str | None):
     tab_eg, tab_ns = st.tabs(["Execution gap rules", "Negative space rules"])
     with tab_eg:
         st.markdown("**Engine:** Execution gaps · identifies breakdowns in expected alert handling.")
-        eg_event = rule_table(["fast_closure", "no_escalation"])
+        eg_event = rule_table(GROUP_DETECTORS["execution_gaps"])
     with tab_ns:
         st.markdown("**Engine:** Negative space · identifies likely monitoring blind spots.")
-        ns_event = rule_table(["low_coverage"])
+        ns_event = rule_table(GROUP_DETECTORS["negative_space"])
 
-    selections = [(eg_event, ["fast_closure", "no_escalation"]),
-                  (ns_event, ["low_coverage"])]
+    selections = [(eg_event, GROUP_DETECTORS["execution_gaps"]),
+                  (ns_event, GROUP_DETECTORS["negative_space"])]
     for event, detectors in selections:
         srows = event.selection.rows if (event and hasattr(event, "selection")) else []
         sig = tuple([detectors[0], *srows])

@@ -51,7 +51,7 @@ satsa detect --data large_run\normalized --detectors execution_gaps,negative_spa
 
 `--data` must contain normalized `alerts.parquet`, `assets.parquet`, and `entities.parquet`. Valid detector group names are `execution_gaps` and `negative_space`; comma-separate them. Invalid names produce an argument error.
 
-The command writes `flags.json` and an adjacent `alert_volumes.json`. Its input configuration defaults are `fast_closure_k=1.5`, `coverage_window_days=30`, and `coverage_threshold_pct=0.25`; keys supplied by YAML override those defaults.
+The command writes `flags.json` and an adjacent `alert_volumes.json`. Its input configuration defaults are `fast_closure_k=1.5`, `coverage_window_days=30`, and `coverage_threshold_pct=0.25`; schema-compatible relationship/peer rules additionally use `investigation_duration_k=1.5`, `low_entity_activity_pct=0.25`, `recurrence_min_alerts=3`, `workload_deviation_pct=0.5`, and `min_peer_sample=4`. Keys supplied by YAML override those defaults. Detection streams alert batches while loading compact cases and escalations and retaining bounded counters for recurrence and workload analysis.
 
 ## 6. Score, report, explain, and validate
 

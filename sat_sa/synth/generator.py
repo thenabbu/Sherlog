@@ -40,6 +40,21 @@ class _BatchWriter:
             self.writer.close()
 
 
+def _truth_for_alert(truth: list[dict], alert: dict, case_root_cause: bool | None = None) -> None:
+    """Record deterministic truth for rules whose evidence is in one alert/relationship."""
+    severity = alert.get("severity")
+    if severity in {"high", "critical"} and alert.get("case_id") is None:
+        truth.append({"detector": "missing_investigation_evidence", "entity_id": alert["entity_id"], "alert_id": alert["alert_id"], "asset_id": None})
+    if severity == "high" and alert.get("disposition") == "true_positive" and not alert.get("escalated"):
+        truth.append({"detector": "high_risk_no_escalation", "entity_id": alert["entity_id"], "alert_id": alert["alert_id"], "asset_id": None})
+    if alert.get("escalated"):
+        truth.append({"detector": "missing_escalation_evidence", "entity_id": alert["entity_id"], "alert_id": alert["alert_id"], "asset_id": None})
+    if case_root_cause is False and severity in {"high", "critical"} and alert.get("first_ack_at"):
+        truth.append({"detector": "ack_without_meaningful_investigation", "entity_id": alert["entity_id"], "alert_id": alert["alert_id"], "asset_id": None})
+        if alert.get("disposition") == "true_positive" and alert.get("closed_at"):
+            truth.append({"detector": "investigation_closure_mismatch", "entity_id": alert["entity_id"], "alert_id": alert["alert_id"], "asset_id": None})
+
+
 def generate(n_entities: int = 25, alerts_per_entity: int = 400, seed: int = 42, anomaly_rate: float = .15) -> dict[str, pd.DataFrame]:
     if n_entities < 4:
         raise ValueError("At least 4 entities are required to form meaningful peer cohorts")
@@ -81,19 +96,24 @@ def generate(n_entities: int = 25, alerts_per_entity: int = 400, seed: int = 42,
             if first_alert is None:
                 first_alert = alert
                 alert["case_id"] = case_id
+            else:
+                _truth_for_alert(truth, alert)
             alerts.append(alert)
         cases.append({"case_id": case_id, "entity_id": entity_id,
                       "opened_at": first_alert["created_at"],
                       "closed_at": first_alert["closed_at"],
                       "alert_ids": [first_alert["alert_id"]],
                       "root_cause_documented": first_alert["disposition"] == "true_positive"})
+        _truth_for_alert(truth, first_alert, first_alert["disposition"] == "true_positive")
         if entity_idx in pools["fast_closure"]:
             alert_number += 1; created = reference - timedelta(hours=1); alert_id = f"AL-{alert_number:06d}"
-            alerts.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "intrusion", "severity": "high", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(minutes=2)).isoformat(), "disposition": "true_positive", "escalated": True, "escalated_at": (created + timedelta(minutes=1)).isoformat(), "case_id": None})
+            injected = {"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "intrusion", "severity": "high", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(minutes=2)).isoformat(), "disposition": "true_positive", "escalated": True, "escalated_at": (created + timedelta(minutes=1)).isoformat(), "case_id": None}
+            alerts.append(injected); _truth_for_alert(truth, injected)
             truth.append({"detector": "fast_closure", "entity_id": entity_id, "alert_id": alert_id, "asset_id": None})
         if entity_idx in pools["no_escalation"]:
             alert_number += 1; created = reference - timedelta(hours=2); alert_id = f"AL-{alert_number:06d}"
-            alerts.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "malware", "severity": "critical", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(hours=8)).isoformat(), "disposition": "true_positive", "escalated": False, "escalated_at": None, "case_id": None})
+            injected = {"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "malware", "severity": "critical", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(hours=8)).isoformat(), "disposition": "true_positive", "escalated": False, "escalated_at": None, "case_id": None}
+            alerts.append(injected); _truth_for_alert(truth, injected)
             truth.append({"detector": "no_escalation", "entity_id": entity_id, "alert_id": alert_id, "asset_id": None})
         if entity_idx in pools["low_coverage"]:
             truth.append({"detector": "low_coverage", "entity_id": entity_id, "alert_id": None, "asset_id": low_asset})
@@ -166,6 +186,9 @@ def write_synthetic(
                     if first_alert is None:
                         first_alert = alert
                         alert["case_id"] = case_id
+                        _truth_for_alert(truth, alert, disposition == "true_positive")
+                    else:
+                        _truth_for_alert(truth, alert)
                     rows.append(alert)
                 alert_writer.write(pd.DataFrame(rows))
                 remaining -= size; written += size
@@ -177,10 +200,12 @@ def write_synthetic(
             if entity_idx in pools["fast_closure"]:
                 alert_number += 1; created = reference - timedelta(hours=1); alert_id = f"AL-{alert_number:09d}"
                 injected.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "intrusion", "severity": "high", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(minutes=2)).isoformat(), "disposition": "true_positive", "escalated": True, "escalated_at": (created + timedelta(minutes=1)).isoformat(), "case_id": None})
+                _truth_for_alert(truth, injected[-1])
                 truth.append({"detector": "fast_closure", "entity_id": entity_id, "alert_id": alert_id, "asset_id": None})
             if entity_idx in pools["no_escalation"]:
                 alert_number += 1; created = reference - timedelta(hours=10); alert_id = f"AL-{alert_number:09d}"
                 injected.append({"alert_id": alert_id, "entity_id": entity_id, "asset_id": own_assets[1]["asset_id"], "category": "malware", "severity": "critical", "created_at": created.isoformat(), "first_ack_at": created.isoformat(), "closed_at": (created + timedelta(hours=8)).isoformat(), "disposition": "true_positive", "escalated": False, "escalated_at": None, "case_id": None})
+                _truth_for_alert(truth, injected[-1])
                 truth.append({"detector": "no_escalation", "entity_id": entity_id, "alert_id": alert_id, "asset_id": None})
             if injected:
                 alert_writer.write(pd.DataFrame(injected)); written += len(injected)

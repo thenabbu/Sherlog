@@ -46,8 +46,9 @@ The normal pipeline is therefore a sequence of artifacts, not a long-lived in-me
 |---|---|
 | `sat_sa/schema.py` | The single source of truth for table fields, allowed enum values, row validation, and the `Flag` output model. |
 | `sat_sa/ingestion/core.py` | Reads CSV/JSON, normalizes blanks and case-list fields, validates each row, and returns accepted rows plus reject records. |
-| `sat_sa/detectors/execution_gaps.py` | D1 fast closure and D2 critical true-positive without escalation. |
-| `sat_sa/detectors/negative_space.py` | D3 low alert coverage on critical assets. |
+| `sat_sa/detectors/execution_gaps.py` | Execution-gap timing, relationship, recurrence, escalation, and workload detectors. |
+| `sat_sa/detectors/negative_space.py` | Critical-asset, investigation/evidence, and peer-activity negative-space detectors. |
+| `sat_sa/detectors/registry.py` | Shared detector metadata, family membership, and default presentation/scoring metadata. |
 | `sat_sa/peer/benchmark.py` | Reusable cohort median, quartiles, IQR, and percentile calculations. |
 | `sat_sa/evidence/core.py` | Resolves IDs in a flag to compact source rows and embeds them in the flag. |
 | `sat_sa/scoring/core.py` | Converts flags and alert volumes into ranked entity scores. |
@@ -252,7 +253,7 @@ ingest → detect → score → report
 
 Synthetic runs also call `validate`. The UI captures command output, records step status in `meta.json`, and stops if a step fails.
 
-The current page model includes Run assessment, Portfolio overview, Entity profile, Findings feed, Peer benchmarking, Review queue, Data health, Detector library, Report center, and How it works. Pages read Parquet/JSON/CSV artifacts from the active run. Review dispositions are appended to `results/dispositions.jsonl`; the review queue is stored in `results/review_queue.json`.
+The current page model includes Run assessment, Portfolio overview, Entity profile, Findings feed, Peer benchmarking, Review queue, Data health, Rules in effect, Report center, and How it works. Pages read Parquet/JSON/CSV artifacts from the active run. Review dispositions are appended to `results/dispositions.jsonl`; the review queue is stored in `results/review_queue.json`.
 
 The UI sanitizes run names before using them as directories and does not shell-interpolate user input. Optional Plotly/Altair support is detected at runtime; the core package requirements do not declare those libraries, so the UI has fallbacks.
 
@@ -270,6 +271,11 @@ streamlit run z.py
 fast_closure_k: 1.5
 coverage_window_days: 30
 coverage_threshold_pct: 0.25
+investigation_duration_k: 1.5
+low_entity_activity_pct: 0.25
+recurrence_min_alerts: 3
+workload_deviation_pct: 0.5
+min_peer_sample: 4
 weights:
   fast_closure: 2
   no_escalation: 3

@@ -6,9 +6,10 @@ import math
 import pandas as pd
 
 from sat_sa.schema import Flag
+from sat_sa.detectors.registry import DETECTOR_REGISTRY
 
 
-DEFAULT_WEIGHTS = {"fast_closure": 2, "no_escalation": 3, "low_coverage": 2}
+DEFAULT_WEIGHTS = {name: meta["weight"] for name, meta in DETECTOR_REGISTRY.items()}
 
 
 def score_entities(flags: list[Flag], alert_volume_by_entity: dict[str, int], weights: dict[str, float] | None = None) -> pd.DataFrame:

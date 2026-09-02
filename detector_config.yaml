@@ -1,7 +1,22 @@
 fast_closure_k: 1.5
 coverage_window_days: 30
 coverage_threshold_pct: 0.25
+investigation_duration_k: 1.5
+low_entity_activity_pct: 0.25
+recurrence_min_alerts: 3
+workload_deviation_pct: 0.5
+min_peer_sample: 4
 weights:
   fast_closure: 2
   no_escalation: 3
   low_coverage: 2
+  ack_without_meaningful_investigation: 2
+  short_investigation: 2
+  investigation_closure_mismatch: 2
+  recurrence_without_root_cause: 2
+  workload_severity_mismatch: 2
+  high_risk_no_escalation: 2
+  critical_asset_no_telemetry: 2
+  missing_investigation_evidence: 2
+  missing_escalation_evidence: 2
+  low_entity_activity: 2

@@ -20,7 +20,14 @@ from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from sat_sa.detectors import detect_critical_no_escalation, detect_fast_closure, detect_low_critical_asset_coverage_from_counts
+from sat_sa.detectors import (
+    detect_ack_without_meaningful_investigation, detect_critical_asset_no_telemetry,
+    detect_critical_no_escalation, detect_fast_closure, detect_high_risk_no_escalation,
+    detect_investigation_closure_mismatch, detect_low_critical_asset_coverage_from_counts,
+    detect_low_entity_activity, detect_missing_escalation_evidence,
+    detect_missing_investigation_evidence, detect_recurrence_without_root_cause,
+    detect_short_investigation, detect_workload_severity_mismatch,
+)
 from sat_sa.evidence import attach_evidence
 from sat_sa.ingestion import FieldMapping, RawTable, normalize, normalize_table
 from sat_sa.schema import Flag, SCHEMAS
@@ -265,7 +272,10 @@ def detect(
     unknown = selected - {"execution_gaps", "negative_space"}
     if unknown:
         raise typer.BadParameter(f"Unknown detector groups: {sorted(unknown)}")
-    settings = {"fast_closure_k": 1.5, "coverage_window_days": 30, "coverage_threshold_pct": .25}
+    settings = {"fast_closure_k": 1.5, "coverage_window_days": 30, "coverage_threshold_pct": .25,
+                "investigation_duration_k": 1.5, "low_entity_activity_pct": .25,
+                "recurrence_min_alerts": 3, "workload_deviation_pct": .5,
+                "min_peer_sample": 4}
     if config:
         settings.update(yaml.safe_load(config.read_text(encoding="utf-8")) or {})
     settings_runtime = choose_runtime_settings(batch_size, workers)
@@ -278,11 +288,18 @@ def detect(
             raise typer.BadParameter(f"Missing required normalized data file: {required}")
     entities = pd.read_parquet(entity_path)
     assets = pd.read_parquet(asset_path).merge(entities[["entity_id", "peer_group"]], on="entity_id", how="left")
+    cases = pd.read_parquet(data / "cases.parquet") if (data / "cases.parquet").exists() else pd.DataFrame()
+    escalations = pd.read_parquet(data / "escalations.parquet") if (data / "escalations.parquet").exists() else pd.DataFrame()
+    case_ids = set(cases["case_id"].astype(str)) if not cases.empty else set()
+    escalation_alert_ids = set(escalations["alert_id"].astype(str)) if not escalations.empty else set()
     total_rows = pq.ParquetFile(alert_path).metadata.num_rows
     started = time.perf_counter()
     flags: list[Flag] = []
     volumes: Counter[str] = Counter()
     observed: Counter[tuple[str, str]] = Counter()
+    entity_alerts: Counter[str] = Counter()
+    entity_high_critical_tp: Counter[str] = Counter()
+    recurring: dict[tuple[str, str], dict[str, list[str]]] = {}
     reference: pd.Timestamp | None = None
     with tempfile.TemporaryDirectory(prefix="sat_sa_closure_") as temporary:
         temp = Path(temporary)
@@ -293,6 +310,16 @@ def detect(
             for batch in _alert_batches(alert_path, lambda: controller.batch_size):
                 batch_started = time.perf_counter()
                 volumes.update(batch["entity_id"].astype(str))
+                entity_alerts.update(batch["entity_id"].astype(str))
+                entity_high_critical_tp.update(batch.loc[(batch["severity"].isin(["high", "critical"])) & (batch["disposition"] == "true_positive"), "entity_id"].astype(str))
+                for _, alert in batch.dropna(subset=["asset_id"]).iterrows():
+                    key = (str(alert.entity_id), str(alert.asset_id))
+                    item = recurring.setdefault(key, {"alert_ids": [], "case_ids": [], "alert_rows": []})
+                    if len(item["alert_ids"]) < 100:
+                        item["alert_ids"].append(str(alert.alert_id))
+                        item["alert_rows"].append(alert.to_dict())
+                    if len(item["case_ids"]) < 100:
+                        item["case_ids"].append(str(alert.case_id) if pd.notna(alert.case_id) else None)
                 created = pd.to_datetime(batch["created_at"], utc=True)
                 batch_reference = created.max()
                 reference = batch_reference if reference is None or batch_reference > reference else reference
@@ -331,7 +358,14 @@ def detect(
                     else:
                         batch_flags = detect_fast_closure(batch, stats, float(settings["fast_closure_k"]))
                         batch_flags.extend(detect_critical_no_escalation(batch))
-                    flags.extend(attach_evidence(flag, {"alerts": batch}) for flag in batch_flags)
+                    batch_flags.extend(detect_ack_without_meaningful_investigation(batch, cases))
+                    batch_flags.extend(detect_investigation_closure_mismatch(batch, cases))
+                    batch_flags.extend(detect_high_risk_no_escalation(batch))
+                    batch_flags.extend(detect_short_investigation(batch, cases, entities, float(settings["investigation_duration_k"]), int(settings["min_peer_sample"])))
+                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in batch_flags)
+                if "negative_space" in selected:
+                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in detect_missing_investigation_evidence(batch, case_ids))
+                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in detect_missing_escalation_evidence(batch, escalation_alert_ids))
                 if "negative_space" in selected and window_start is not None:
                     dates = pd.to_datetime(batch["created_at"], utc=True)
                     recent = batch[(dates >= window_start) & (dates <= reference)]
@@ -342,6 +376,23 @@ def detect(
             count_frame = pd.DataFrame([{"entity_id": entity, "asset_id": asset, "observed_count": count} for (entity, asset), count in observed.items()], columns=["entity_id", "asset_id", "observed_count"])
             coverage_flags = detect_low_critical_asset_coverage_from_counts(count_frame, assets, reference if reference is not None else pd.Timestamp.now(tz="UTC"), window_days=window_days, threshold_pct=float(settings["coverage_threshold_pct"]))
             flags.extend(attach_evidence(flag, {"assets": assets}) for flag in coverage_flags)
+            flags.extend(attach_evidence(flag, {"assets": assets}) for flag in detect_critical_asset_no_telemetry(count_frame, assets, reference if reference is not None else pd.Timestamp.now(tz="UTC"), window_days=window_days))
+            activity = pd.DataFrame([{"entity_id": entity, "alert_count": count} for entity, count in entity_alerts.items()])
+            flags.extend(detect_low_entity_activity(activity, entities, float(settings["low_entity_activity_pct"]), int(settings["min_peer_sample"])))
+        if "execution_gaps" in selected:
+            recurrence_rows = []
+            for (entity, asset), item in recurring.items():
+                if len(item["alert_ids"]) < int(settings["recurrence_min_alerts"]):
+                    continue
+                for index, alert_id in enumerate(item["alert_ids"]):
+                    recurrence_rows.append({"entity_id": entity, "asset_id": asset, "alert_id": alert_id,
+                                            "case_id": item["case_ids"][index]})
+            recurrence_input = pd.DataFrame(recurrence_rows, columns=["entity_id", "asset_id", "alert_id", "case_id"])
+            recurrence_flags = detect_recurrence_without_root_cause(recurrence_input, cases, int(settings["recurrence_min_alerts"])) if not recurrence_input.empty else []
+            recurrence_alerts = pd.DataFrame([row for item in recurring.values() for row in item["alert_rows"]])
+            flags.extend(attach_evidence(flag, {"alerts": recurrence_alerts, "cases": cases, "assets": assets}) for flag in recurrence_flags)
+            workload = pd.DataFrame([{"entity_id": entity, "high_critical_tp": count} for entity, count in entity_high_critical_tp.items()])
+            flags.extend(detect_workload_severity_mismatch(workload, cases, entities, float(settings["workload_deviation_pct"]), int(settings["min_peer_sample"])))
     # IDs are globally unique after multiple detector modules independently create flags.
     flags = [flag.model_copy(update={"flag_id": f"fg_{index:05d}"}) for index, flag in enumerate(flags, 1)]
     _write_flags(out, flags)
