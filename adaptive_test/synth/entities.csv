@@ -1,0 +1,5 @@
+entity_id,name,peer_group,sector
+CSE-001,Synthetic CSE 1,finserv-tier2,financial
+CSE-002,Synthetic CSE 2,energy-tier2,energy
+CSE-003,Synthetic CSE 3,finserv-tier2,financial
+CSE-004,Synthetic CSE 4,energy-tier2,energy

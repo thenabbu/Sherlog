@@ -1,0 +1,132 @@
+[
+  {
+    "flag_id": "fg_00001",
+    "detector": "fast_closure",
+    "entity_id": "CSE-001",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000000021 (severity=high) closed in 2m, vs baseline Q1 of 7.5h for this severity \u2014 225.9x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000000021"
+      ],
+      "observed_value": "2m",
+      "baseline_value": "7.5h (Q1)",
+      "baseline_source": "severity=high, n=20 alerts",
+      "time_to_close_minutes": 2.0,
+      "baseline_q1_minutes": 451.75,
+      "baseline_iqr_minutes": 33.5,
+      "source_rows": [
+        {
+          "alert_id": "AL-000000021",
+          "entity_id": "CSE-001",
+          "asset_id": "AST-001-2",
+          "category": "intrusion",
+          "severity": "high",
+          "created_at": "2026-08-30T11:00:00Z",
+          "first_ack_at": "2026-08-30T11:00:00Z",
+          "closed_at": "2026-08-30T11:02:00Z",
+          "disposition": "true_positive",
+          "escalated": true,
+          "escalated_at": "2026-08-30T11:01:00Z",
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:57.175757Z"
+  },
+  {
+    "flag_id": "fg_00002",
+    "detector": "fast_closure",
+    "entity_id": "CSE-003",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000000047 (severity=critical) closed in 7.2h, vs baseline Q1 of 7.8h for this severity \u2014 1.1x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000000047"
+      ],
+      "observed_value": "7.2h",
+      "baseline_value": "7.8h (Q1)",
+      "baseline_source": "severity=critical, n=10 alerts",
+      "time_to_close_minutes": 432.0,
+      "baseline_q1_minutes": 468.75,
+      "baseline_iqr_minutes": 24.25,
+      "source_rows": [
+        {
+          "alert_id": "AL-000000047",
+          "entity_id": "CSE-003",
+          "asset_id": "AST-003-2",
+          "category": "DoS",
+          "severity": "critical",
+          "created_at": "2026-08-22T21:20:00Z",
+          "first_ack_at": "2026-08-22T21:25:00Z",
+          "closed_at": "2026-08-23T04:32:00Z",
+          "disposition": "true_positive",
+          "escalated": true,
+          "escalated_at": "2026-08-22T21:50:00Z",
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:57.207841Z"
+  },
+  {
+    "flag_id": "fg_00003",
+    "detector": "no_escalation",
+    "entity_id": "CSE-004",
+    "severity_weight": 3.0,
+    "rationale": "Critical true-positive alert AL-000000082 was closed without any recorded escalation.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000000082"
+      ],
+      "disposition": "true_positive",
+      "closed_at": "2026-08-30T10:00:00Z",
+      "escalated": false,
+      "source_rows": [
+        {
+          "alert_id": "AL-000000082",
+          "entity_id": "CSE-004",
+          "asset_id": "AST-004-2",
+          "category": "malware",
+          "severity": "critical",
+          "created_at": "2026-08-30T02:00:00Z",
+          "first_ack_at": "2026-08-30T02:00:00Z",
+          "closed_at": "2026-08-30T10:00:00Z",
+          "disposition": "true_positive",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:57.246330Z"
+  },
+  {
+    "flag_id": "fg_00004",
+    "detector": "low_coverage",
+    "entity_id": "CSE-003",
+    "severity_weight": 2.0,
+    "rationale": "Critical asset AST-003-1 generated 0 alerts in the last 30 days vs a peer median of 7.5 \u2014 possible monitoring gap.",
+    "evidence": {
+      "asset_ids": [
+        "AST-003-1"
+      ],
+      "window_days": 30,
+      "observed_count": 0,
+      "peer_median": 7.5,
+      "peer_group": "finserv-tier2",
+      "threshold_pct": 0.25,
+      "window_end": "2026-08-30T11:00:00+00:00",
+      "source_rows": [
+        {
+          "asset_id": "AST-003-1",
+          "entity_id": "CSE-003",
+          "criticality": "critical",
+          "asset_type": "payment gateway",
+          "peer_group": "finserv-tier2"
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:57.264707Z"
+  }
+]

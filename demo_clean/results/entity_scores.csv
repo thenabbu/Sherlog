@@ -1,0 +1,13 @@
+entity_id,risk_score,priority_rank,flag_count_by_detector,distinct_detectors_triggered,alert_volume
+CSE-001,0.9692,1,"{""fast_closure"": 1, ""low_coverage"": 1}",2,61
+CSE-005,0.7269,2,"{""no_escalation"": 1}",1,61
+CSE-006,0.7269,3,"{""no_escalation"": 1}",1,61
+CSE-009,0.4865,4,"{""low_coverage"": 1}",1,60
+CSE-010,0.4846,5,"{""fast_closure"": 1}",1,61
+CSE-002,0.0,6,{},0,60
+CSE-003,0.0,7,{},0,60
+CSE-004,0.0,8,{},0,60
+CSE-007,0.0,9,{},0,60
+CSE-008,0.0,10,{},0,60
+CSE-011,0.0,11,{},0,60
+CSE-012,0.0,12,{},0,60

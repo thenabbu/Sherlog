@@ -1,0 +1,297 @@
+[
+  {
+    "flag_id": "fg_00001",
+    "detector": "fast_closure",
+    "entity_id": "CSE-001",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000061 (severity=high) closed in 2m, vs baseline Q1 of 7.2h for this severity \u2014 216.5x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000061"
+      ],
+      "observed_value": "2m",
+      "baseline_value": "7.2h (Q1)",
+      "baseline_source": "severity=high, n=160 alerts",
+      "time_to_close_minutes": 2.0,
+      "baseline_q1_minutes": 433.0,
+      "baseline_iqr_minutes": 92.25,
+      "source_rows": [
+        {
+          "alert_id": "AL-000061",
+          "entity_id": "CSE-001",
+          "asset_id": "AST-001-2",
+          "category": "intrusion",
+          "severity": "high",
+          "created_at": "2026-08-30T11:00:00Z",
+          "first_ack_at": "2026-08-30T11:00:00Z",
+          "closed_at": "2026-08-30T11:02:00Z",
+          "disposition": "true_positive",
+          "escalated": true,
+          "escalated_at": "2026-08-30T11:01:00Z",
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.255927Z"
+  },
+  {
+    "flag_id": "fg_00002",
+    "detector": "fast_closure",
+    "entity_id": "CSE-005",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000302 (severity=critical) closed in 3.0h, vs baseline Q1 of 7.2h for this severity \u2014 2.4x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000302"
+      ],
+      "observed_value": "3.0h",
+      "baseline_value": "7.2h (Q1)",
+      "baseline_source": "severity=critical, n=60 alerts",
+      "time_to_close_minutes": 180.0,
+      "baseline_q1_minutes": 429.25,
+      "baseline_iqr_minutes": 64.0,
+      "source_rows": [
+        {
+          "alert_id": "AL-000302",
+          "entity_id": "CSE-005",
+          "asset_id": "AST-005-2",
+          "category": "malware",
+          "severity": "critical",
+          "created_at": "2026-08-30T10:00:00Z",
+          "first_ack_at": "2026-08-30T10:00:00Z",
+          "closed_at": "2026-08-30T13:00:00Z",
+          "disposition": "true_positive",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.262943Z"
+  },
+  {
+    "flag_id": "fg_00003",
+    "detector": "fast_closure",
+    "entity_id": "CSE-006",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000363 (severity=critical) closed in 3.0h, vs baseline Q1 of 7.2h for this severity \u2014 2.4x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000363"
+      ],
+      "observed_value": "3.0h",
+      "baseline_value": "7.2h (Q1)",
+      "baseline_source": "severity=critical, n=60 alerts",
+      "time_to_close_minutes": 180.0,
+      "baseline_q1_minutes": 429.25,
+      "baseline_iqr_minutes": 64.0,
+      "source_rows": [
+        {
+          "alert_id": "AL-000363",
+          "entity_id": "CSE-006",
+          "asset_id": "AST-006-2",
+          "category": "malware",
+          "severity": "critical",
+          "created_at": "2026-08-30T10:00:00Z",
+          "first_ack_at": "2026-08-30T10:00:00Z",
+          "closed_at": "2026-08-30T13:00:00Z",
+          "disposition": "true_positive",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.264942Z"
+  },
+  {
+    "flag_id": "fg_00004",
+    "detector": "fast_closure",
+    "entity_id": "CSE-007",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000377 (severity=critical) closed in 5.5h, vs baseline Q1 of 7.2h for this severity \u2014 1.3x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000377"
+      ],
+      "observed_value": "5.5h",
+      "baseline_value": "7.2h (Q1)",
+      "baseline_source": "severity=critical, n=60 alerts",
+      "time_to_close_minutes": 328.0,
+      "baseline_q1_minutes": 429.25,
+      "baseline_iqr_minutes": 64.0,
+      "source_rows": [
+        {
+          "alert_id": "AL-000377",
+          "entity_id": "CSE-007",
+          "asset_id": "AST-007-3",
+          "category": "DoS",
+          "severity": "critical",
+          "created_at": "2026-08-05T08:27:00Z",
+          "first_ack_at": "2026-08-05T08:32:00Z",
+          "closed_at": "2026-08-05T13:55:00Z",
+          "disposition": "benign",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.264942Z"
+  },
+  {
+    "flag_id": "fg_00005",
+    "detector": "fast_closure",
+    "entity_id": "CSE-010",
+    "severity_weight": 2.0,
+    "rationale": "Alert AL-000604 (severity=high) closed in 2m, vs baseline Q1 of 7.2h for this severity \u2014 216.5x faster than typical.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000604"
+      ],
+      "observed_value": "2m",
+      "baseline_value": "7.2h (Q1)",
+      "baseline_source": "severity=high, n=160 alerts",
+      "time_to_close_minutes": 2.0,
+      "baseline_q1_minutes": 433.0,
+      "baseline_iqr_minutes": 92.25,
+      "source_rows": [
+        {
+          "alert_id": "AL-000604",
+          "entity_id": "CSE-010",
+          "asset_id": "AST-010-2",
+          "category": "intrusion",
+          "severity": "high",
+          "created_at": "2026-08-30T11:00:00Z",
+          "first_ack_at": "2026-08-30T11:00:00Z",
+          "closed_at": "2026-08-30T11:02:00Z",
+          "disposition": "true_positive",
+          "escalated": true,
+          "escalated_at": "2026-08-30T11:01:00Z",
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.271465Z"
+  },
+  {
+    "flag_id": "fg_00006",
+    "detector": "no_escalation",
+    "entity_id": "CSE-005",
+    "severity_weight": 3.0,
+    "rationale": "Critical true-positive alert AL-000302 was closed without any recorded escalation.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000302"
+      ],
+      "disposition": "true_positive",
+      "closed_at": "2026-08-30T13:00:00Z",
+      "escalated": false,
+      "source_rows": [
+        {
+          "alert_id": "AL-000302",
+          "entity_id": "CSE-005",
+          "asset_id": "AST-005-2",
+          "category": "malware",
+          "severity": "critical",
+          "created_at": "2026-08-30T10:00:00Z",
+          "first_ack_at": "2026-08-30T10:00:00Z",
+          "closed_at": "2026-08-30T13:00:00Z",
+          "disposition": "true_positive",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.278510Z"
+  },
+  {
+    "flag_id": "fg_00007",
+    "detector": "no_escalation",
+    "entity_id": "CSE-006",
+    "severity_weight": 3.0,
+    "rationale": "Critical true-positive alert AL-000363 was closed without any recorded escalation.",
+    "evidence": {
+      "alert_ids": [
+        "AL-000363"
+      ],
+      "disposition": "true_positive",
+      "closed_at": "2026-08-30T13:00:00Z",
+      "escalated": false,
+      "source_rows": [
+        {
+          "alert_id": "AL-000363",
+          "entity_id": "CSE-006",
+          "asset_id": "AST-006-2",
+          "category": "malware",
+          "severity": "critical",
+          "created_at": "2026-08-30T10:00:00Z",
+          "first_ack_at": "2026-08-30T10:00:00Z",
+          "closed_at": "2026-08-30T13:00:00Z",
+          "disposition": "true_positive",
+          "escalated": false,
+          "escalated_at": null,
+          "case_id": null
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.278510Z"
+  },
+  {
+    "flag_id": "fg_00008",
+    "detector": "low_coverage",
+    "entity_id": "CSE-001",
+    "severity_weight": 2.0,
+    "rationale": "Critical asset AST-001-1 generated 0 alerts in the last 30 days vs a peer median of 20.0 \u2014 possible monitoring gap.",
+    "evidence": {
+      "asset_ids": [
+        "AST-001-1"
+      ],
+      "window_days": 30,
+      "observed_count": 0,
+      "peer_median": 20.0,
+      "peer_group": "finserv-tier2",
+      "threshold_pct": 0.25,
+      "window_end": "2026-08-30T11:00:00+00:00",
+      "source_rows": [
+        {
+          "asset_id": "AST-001-1",
+          "entity_id": "CSE-001",
+          "criticality": "critical",
+          "asset_type": "payment gateway",
+          "peer_group": "finserv-tier2"
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.304064Z"
+  },
+  {
+    "flag_id": "fg_00009",
+    "detector": "low_coverage",
+    "entity_id": "CSE-009",
+    "severity_weight": 2.0,
+    "rationale": "Critical asset AST-009-1 generated 0 alerts in the last 30 days vs a peer median of 20.0 \u2014 possible monitoring gap.",
+    "evidence": {
+      "asset_ids": [
+        "AST-009-1"
+      ],
+      "window_days": 30,
+      "observed_count": 0,
+      "peer_median": 20.0,
+      "peer_group": "finserv-tier2",
+      "threshold_pct": 0.25,
+      "window_end": "2026-08-30T11:00:00+00:00",
+      "source_rows": [
+        {
+          "asset_id": "AST-009-1",
+          "entity_id": "CSE-009",
+          "criticality": "critical",
+          "asset_type": "payment gateway",
+          "peer_group": "finserv-tier2"
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T22:39:38.305063Z"
+  }
+]

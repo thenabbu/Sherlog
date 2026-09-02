@@ -1,0 +1,7 @@
+fast_closure_k: 1.5
+coverage_window_days: 30
+coverage_threshold_pct: 0.25
+weights:
+  fast_closure: 2
+  no_escalation: 3
+  low_coverage: 2

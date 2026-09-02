@@ -1,0 +1,26 @@
+entity_id,name,peer_group,sector
+CSE-001,Synthetic CSE 1,finserv-tier2,financial
+CSE-002,Synthetic CSE 2,energy-tier2,energy
+CSE-003,Synthetic CSE 3,finserv-tier2,financial
+CSE-004,Synthetic CSE 4,energy-tier2,energy
+CSE-005,Synthetic CSE 5,finserv-tier2,financial
+CSE-006,Synthetic CSE 6,energy-tier2,energy
+CSE-007,Synthetic CSE 7,finserv-tier2,financial
+CSE-008,Synthetic CSE 8,energy-tier2,energy
+CSE-009,Synthetic CSE 9,finserv-tier2,financial
+CSE-010,Synthetic CSE 10,energy-tier2,energy
+CSE-011,Synthetic CSE 11,finserv-tier2,financial
+CSE-012,Synthetic CSE 12,energy-tier2,energy
+CSE-013,Synthetic CSE 13,finserv-tier2,financial
+CSE-014,Synthetic CSE 14,energy-tier2,energy
+CSE-015,Synthetic CSE 15,finserv-tier2,financial
+CSE-016,Synthetic CSE 16,energy-tier2,energy
+CSE-017,Synthetic CSE 17,finserv-tier2,financial
+CSE-018,Synthetic CSE 18,energy-tier2,energy
+CSE-019,Synthetic CSE 19,finserv-tier2,financial
+CSE-020,Synthetic CSE 20,energy-tier2,energy
+CSE-021,Synthetic CSE 21,finserv-tier2,financial
+CSE-022,Synthetic CSE 22,energy-tier2,energy
+CSE-023,Synthetic CSE 23,finserv-tier2,financial
+CSE-024,Synthetic CSE 24,energy-tier2,energy
+CSE-025,Synthetic CSE 25,finserv-tier2,financial

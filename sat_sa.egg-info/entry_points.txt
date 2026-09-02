@@ -1,0 +1,2 @@
+[console_scripts]
+satsa = sat_sa.cli:app

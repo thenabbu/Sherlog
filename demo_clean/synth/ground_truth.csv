@@ -1,0 +1,7 @@
+detector,entity_id,alert_id,asset_id
+fast_closure,CSE-001,AL-000061,
+low_coverage,CSE-001,,AST-001-1
+no_escalation,CSE-005,AL-000302,
+no_escalation,CSE-006,AL-000363,
+low_coverage,CSE-009,,AST-009-1
+fast_closure,CSE-010,AL-000604,

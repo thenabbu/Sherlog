@@ -1,0 +1,58 @@
+[
+  {
+    "flag_id": "fg_00001",
+    "detector": "low_coverage",
+    "entity_id": "CSE-001",
+    "severity_weight": 2.0,
+    "rationale": "Critical asset AST-001-1 generated 0 alerts in the last 30 days vs a peer median of 0.5 \u2014 possible monitoring gap.",
+    "evidence": {
+      "asset_ids": [
+        "AST-001-1"
+      ],
+      "window_days": 30,
+      "observed_count": 0,
+      "peer_median": 0.5,
+      "peer_group": "finserv-tier2",
+      "threshold_pct": 0.25,
+      "window_end": "2026-08-30T11:00:00+00:00",
+      "source_rows": [
+        {
+          "asset_id": "AST-001-1",
+          "entity_id": "CSE-001",
+          "criticality": "critical",
+          "asset_type": "payment gateway",
+          "peer_group": "finserv-tier2"
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:24.922664Z"
+  },
+  {
+    "flag_id": "fg_00002",
+    "detector": "low_coverage",
+    "entity_id": "CSE-003",
+    "severity_weight": 2.0,
+    "rationale": "Critical asset AST-003-1 generated 0 alerts in the last 30 days vs a peer median of 0.5 \u2014 possible monitoring gap.",
+    "evidence": {
+      "asset_ids": [
+        "AST-003-1"
+      ],
+      "window_days": 30,
+      "observed_count": 0,
+      "peer_median": 0.5,
+      "peer_group": "finserv-tier2",
+      "threshold_pct": 0.25,
+      "window_end": "2026-08-30T11:00:00+00:00",
+      "source_rows": [
+        {
+          "asset_id": "AST-003-1",
+          "entity_id": "CSE-003",
+          "criticality": "critical",
+          "asset_type": "payment gateway",
+          "peer_group": "finserv-tier2"
+        }
+      ]
+    },
+    "generated_at": "2026-08-29T23:36:24.922664Z"
+  }
+]
