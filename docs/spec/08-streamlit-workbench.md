@@ -16,7 +16,8 @@ Streamlit's built-in navigation contains these pages in order:
 
 1. **Run assessment:** has two routes—synthetic multi-CSE presets or five uploaded CSV exports—and one Start action that automatically validates, analyses, scores, and publishes.
 2. **Review results:** presents the priority queue, enhanced risk/signal charts, record-level evidence, and optional synthetic validation.
-3. **How it works:** gives the concise supervisory/process explanation for demos.
+3. **Rules in effect:** shows the active execution-gap and negative-space rules in separate tabs, including their conditions, methods, scoring weights, and findings fired for the selected cycle.
+4. **How it works:** gives the concise supervisory/process explanation for demos.
 
 The sidebar holds only the run name, workflow status, refresh action, and navigation. Every run writes inside `runs/<sanitised run name>/` with `source`, `normalized`, and `results` children so separate demos cannot overwrite one another.
 
@@ -40,6 +41,8 @@ The workbench relies on Streamlit's built-in navigation, metrics, radio/segmente
 The intake page requires `entities.csv`, `assets.csv`, `alerts.csv`, `cases.csv`, and `escalations.csv`. It copies uploaded files to the current run and only enables validation after every logical table is present. Validation launches the original CSV `ingest` command.
 
 The analytics page exposes the three signal descriptions, an adaptive-runtime toggle, then runs `detect`, `score`, and JSON `report` in sequence. Status containers show live captured CLI output and final elapsed time/error state.
+
+The **Rules in effect** page is read-only and is tied to the selected cycle. UI-created runs persist the merged detector defaults and YAML overrides in `meta.json`, so later edits to `detector_config.yaml` do not change the rules displayed for a historical run. Older runs without this snapshot show current values with an explicit fallback notice.
 
 ## Results page
 

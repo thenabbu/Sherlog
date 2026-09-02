@@ -126,7 +126,7 @@ PAGES = {
     "benchmark": "Peer benchmarking",
     "queue": "Review queue",
     "health": "Data health",
-    "detectors": "Detector library",
+    "detectors": "Rules in effect",
     "reports": "Report center",
     "how": "How it works",
 }
@@ -136,6 +136,13 @@ SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 SEV_COLOR = {"critical": "#922b21", "high": "#b9770e", "medium": "#9a7d0a", "low": "#1e8449"}
 FAM_COLOR = {"EG": "#21618c", "NS": "#6c3483"}
 DISP_OPTIONS = ["Reviewed – benign", "Confirmed – escalate", "Insufficient evidence"]
+
+DEFAULT_DETECTOR_CONFIG = {
+    "fast_closure_k": 1.5,
+    "coverage_window_days": 30,
+    "coverage_threshold_pct": 0.25,
+    "weights": {"fast_closure": 2, "no_escalation": 3, "low_coverage": 2},
+}
 
 RULE_META = {
     "fast_closure": dict(
@@ -324,6 +331,23 @@ def _read_json(p: Path, default):
         return json.loads(Path(p).read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def effective_detector_config(config_path: Path | None) -> tuple[dict, str]:
+    """Resolve the detector settings using the same defaults as the CLI."""
+    config = {
+        **DEFAULT_DETECTOR_CONFIG,
+        "weights": dict(DEFAULT_DETECTOR_CONFIG["weights"]),
+    }
+    source = "built-in defaults (no config file)"
+    if config_path and config_path.exists() and YAML_OK:
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        config.update({key: loaded[key] for key in (
+            "fast_closure_k", "coverage_window_days", "coverage_threshold_pct"
+        ) if key in loaded})
+        config["weights"].update(loaded.get("weights") or {})
+        source = str(config_path)
+    return config, source
 
 
 # ----------------------------------------------------------------------------- CLI bridge
@@ -1376,7 +1400,11 @@ def run_pipeline(name: str, mode: str, params: dict, uploads: dict):
     rd = RUNS_DIR / name
     (rd / "results").mkdir(parents=True, exist_ok=True)
     src, norm, res = rd / "source", rd / "normalized", rd / "results"
-    meta = dict(name=name, mode=mode, created=now_iso(), steps=[], params=params)
+    cfgp = (APP_DIR / params["config"]) if params.get("config") else None
+    config, config_source = effective_detector_config(cfgp)
+    meta = dict(name=name, mode=mode, created=now_iso(), steps=[], params=params,
+                effective_detector_config=config,
+                detector_config_source=config_source)
     _write_meta(rd, meta)
 
     synth_rt = _runtime_options("generate-synth", params.get("batch"), params.get("workers"),
@@ -1385,7 +1413,6 @@ def run_pipeline(name: str, mode: str, params: dict, uploads: dict):
                                  params.get("adaptive", True), params.get("hc", 4))
     detect_rt = _runtime_options("detect", params.get("batch"), params.get("workers"),
                                  params.get("adaptive", True), params.get("hc", 4))
-    cfgp = (APP_DIR / params["config"]) if params.get("config") else None
     config = str(cfgp) if (cfgp and cfgp.exists()) else None
 
     try:
@@ -2326,50 +2353,73 @@ def render_health_page(run_dir: str):
     show_table(pd.DataFrame(rows), hide_index=True)
 
 
-# ----------------------------------------------------------------------------- Detector library page
-def render_detectors_page(run_dir: str):
-    st.header("Detector / rule library")
-    st.caption("Explainability & auditability of the rule set itself — what the tool actually "
-               "checks for, without reading code. Row click filters the Findings feed to that rule.")
-    fired = pd.Series([f.get("detector") for f in load_flags(run_dir)]).value_counts().to_dict()
-    cfgp = APP_DIR / "detector_config.yaml"
-    yml = {}
-    if cfgp.exists() and YAML_OK:
-        try:
-            yml = yaml.safe_load(cfgp.read_text()) or {}
-        except Exception:
-            yml = {}
-    k = yml.get("fast_closure_k", 1.5)
-    wd = yml.get("coverage_window_days", 30)
-    tp = yml.get("coverage_threshold_pct", 0.25)
-    thr = {
-        "fast_closure": f"time_to_close < Q1 − {k} × IQR (severity-specific)",
+# ----------------------------------------------------------------------------- Rules in effect page
+def render_detectors_page(run_dir: str | None):
+    st.header("Rules in effect")
+    st.caption("Read-only view of the supervisory rules applied by each flagging engine. "
+               "Select a row to filter the Findings feed to that detector.")
+
+    if run_dir:
+        meta = load_meta(run_dir)
+        snapshot = meta.get("effective_detector_config")
+        if snapshot:
+            config = snapshot
+            source = meta.get("detector_config_source", "run snapshot")
+            st.info(f"Showing the exact configuration captured for cycle **{Path(run_dir).name}**. "
+                    f"Source: `{source}`")
+        else:
+            cfgp = APP_DIR / "detector_config.yaml"
+            config, source = effective_detector_config(cfgp)
+            st.warning("Configuration snapshot unavailable for this legacy/external run; "
+                       "showing the current configured values instead.")
+    else:
+        config, source = effective_detector_config(APP_DIR / "detector_config.yaml")
+        st.info("No assessment run is selected. Showing the current configured values.")
+
+    fired = (pd.Series([f.get("detector") for f in load_flags(run_dir)])
+             .value_counts().to_dict()) if run_dir else {}
+    k = float(config.get("fast_closure_k", DEFAULT_DETECTOR_CONFIG["fast_closure_k"]))
+    wd = int(config.get("coverage_window_days", DEFAULT_DETECTOR_CONFIG["coverage_window_days"]))
+    tp = float(config.get("coverage_threshold_pct", DEFAULT_DETECTOR_CONFIG["coverage_threshold_pct"]))
+    weights = {**DEFAULT_DETECTOR_CONFIG["weights"], **(config.get("weights") or {})}
+    threshold = {
+        "fast_closure": f"time_to_close < Q1 − {k:g} × IQR (severity-specific)",
         "no_escalation": "severity=critical ∧ disposition=true_positive ∧ escalated=false",
         "low_coverage": f"{wd}-day count < {tp:.0%} × peer median (critical assets)",
     }
-    dets = list(RULE_META)
-    rows = []
-    for det in dets:
-        meta = RULE_META[det]
-        rows.append({
-            "Rule": meta["rule"], "Plain-language description": meta["desc"],
-            "Method": meta["method"], "Current threshold": thr[det],
-            "Capability area": meta["capability"],
-            "Family": family_label(meta["family"]),
-            "Score weight": meta["weight"],
-            "Calibration": (f"detector_config.yaml · "
-                            f"{dt.datetime.fromtimestamp(cfgp.stat().st_mtime):%Y-%m-%d}"
-                            if cfgp.exists() else "built-in defaults (no config file)"),
-            "Fired this cycle": fired.get(det, 0),
-        })
-    ev = show_table(pd.DataFrame(rows), hide_index=True, key="dl_tbl",
-                    on_select="rerun", selection_mode="single-row")
-    srows = ev.selection.rows if (ev and hasattr(ev, "selection")) else []
-    sig = tuple(srows)
-    if sig and sig != ss.get("dl_lastsel"):
-        ss.dl_lastsel = sig
-        if srows:
-            ss.findings_filter = {"detector": dets[srows[0]]}
+    st.caption(f"Configuration source: `{source}` · values are read-only")
+
+    def rule_table(detectors):
+        rows = []
+        for det in detectors:
+            rule = RULE_META[det]
+            rows.append({
+                "Rule": rule["rule"], "Plain-language description": rule["desc"],
+                "Method": rule["method"], "Active condition": threshold[det],
+                "Capability area": rule["capability"], "Family": family_label(rule["family"]),
+                "Score weight": weights.get(det, rule["weight"]),
+                "Fired this cycle": fired.get(det, 0),
+            })
+        return show_table(pd.DataFrame(rows), hide_index=True,
+                          key=f"rules_{detectors[0]}", on_select="rerun",
+                          selection_mode="single-row")
+
+    tab_eg, tab_ns = st.tabs(["Execution gap rules", "Negative space rules"])
+    with tab_eg:
+        st.markdown("**Engine:** Execution gaps · identifies breakdowns in expected alert handling.")
+        eg_event = rule_table(["fast_closure", "no_escalation"])
+    with tab_ns:
+        st.markdown("**Engine:** Negative space · identifies likely monitoring blind spots.")
+        ns_event = rule_table(["low_coverage"])
+
+    selections = [(eg_event, ["fast_closure", "no_escalation"]),
+                  (ns_event, ["low_coverage"])]
+    for event, detectors in selections:
+        srows = event.selection.rows if (event and hasattr(event, "selection")) else []
+        sig = tuple([detectors[0], *srows])
+        if srows and sig != ss.get("rules_lastsel"):
+            ss.rules_lastsel = sig
+            ss.findings_filter = {"detector": detectors[srows[0]]}
             go("findings")
 
 
@@ -2809,6 +2859,8 @@ def main():
         render_run_page()
     elif ss.nav_page == "how":
         render_how_page(rd)
+    elif ss.nav_page == "detectors":
+        render_detectors_page(str(rd) if rd else None)
     elif rd is None:
         st.info("No assessment runs yet. Create one first — synthetic presets or a five-CSV "
                 "submission.")
