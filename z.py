@@ -1,6 +1,6 @@
 """
 SAT-SA — Supervisory Analytics Tool for SOC Assessment
-Streamlit supervisor workbench (single-file `app.py`)
+Streamlit supervisor workbench (single-file `z.py`)
 =====================================================
 
 What this is
@@ -28,7 +28,7 @@ Run it
 ------
     pip install "streamlit>=1.36" pandas pyarrow     # plotly / pyyaml / weasyprint optional
     pip install -e .                                  # the sat_sa package, same venv
-    streamlit run app.py
+    streamlit run z.py
 
 Deep links:  ?page=findings&run=<name>&entity=CSE-003&finding=fg_00012
 """
@@ -1057,7 +1057,8 @@ def _cycle_changed():
 
 def render_sidebar():
     with st.sidebar:
-        st.markdown("## SAT-SA")
+        st.markdown("# Sherlog")
+        st.markdown("#### SAT-SA")
         st.caption("Supervisory Analytics Tool — SOC Assessment workbench")
         st.divider()
         runs = list_runs()

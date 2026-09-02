@@ -1,0 +1,22 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+*.egg-info
+
+# Runtime/user-generated artifacts are kept outside the image.
+runs
+data
+demo_data
+demo_clean
+demo_results
+adaptive_test
+fixed_mode_test
+stream_test
+stream_test2
+
+# Large alternate UI drafts and local work files.
+old-ui
+*.log

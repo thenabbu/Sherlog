@@ -32,12 +32,38 @@ satsa validate --flags results/flags.json --synth-ground-truth data/synth/ground
 The optional Streamlit interface is a presentation layer over the same local artifacts and CLI implementation; it does not duplicate analytics. Install the declared dependencies, then run:
 
 ```powershell
-streamlit run app.py
+streamlit run z.py
 ```
 
 The UI keeps each showcase in `runs/<run-name>/`. On its **Run assessment** page, choose either a synthetic preset or upload the five CSV exports; one Start action automatically validates, analyses, ranks, and publishes the local result set for review.
 
 `generate-synth` produces both CSV (for the explicit ingestion stage) and parquet. Ground truth is only used by `validate`; detectors never read it.
+
+## Docker deployment
+
+The image runs the current Streamlit workbench from `z.py`, includes the `satsa` CLI,
+and stores generated assessment runs under `/app/runs`. The image has no runtime
+network dependency; the browser only needs access to the Streamlit HTTP port.
+
+Build and run it with a persistent named volume:
+
+```powershell
+docker build -t satsa:latest .
+docker run --rm -p 8501:8501 -v satsa-runs:/app/runs satsa:latest
+```
+
+Open <http://localhost:8501>. For a repeatable local deployment using Compose:
+
+```powershell
+docker compose up --build -d
+docker compose logs -f satsa
+docker compose down
+```
+
+To move the application to another host, transfer the repository (or publish the
+image to an approved registry), then run the same `docker run` command. The
+`runs/` volume is separate from the image so rebuilding or replacing the
+container does not remove assessment artifacts.
 
 ## Large submissions
 

@@ -1,0 +1,13 @@
+services:
+  satsa:
+    build:
+      context: .
+    image: satsa:local
+    ports:
+      - "8501:8501"
+    volumes:
+      - satsa-runs:/app/runs
+    restart: unless-stopped
+
+volumes:
+  satsa-runs:
