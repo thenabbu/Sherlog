@@ -1,0 +1,9 @@
+docs/
+old-ui/
+data/
+results/
+tests/
+adaptive_test/
+compose.yaml
+Dockerfile
+.dockerignore
