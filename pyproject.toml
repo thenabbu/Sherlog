@@ -30,3 +30,6 @@ include = ["sat_sa*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.vercel]
+entrypoint = "api:app"

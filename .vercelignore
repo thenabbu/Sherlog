@@ -1,0 +1,11 @@
+docs/
+old-ui/
+data/
+results/
+tests/
+adaptive_test/
+sat_sa.egg-info/
+Dockerfile
+.dockerignore
+compose.yaml
+.git/
