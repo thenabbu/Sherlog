@@ -44,6 +44,14 @@ docker compose up --build -d
 ```
 
 The `runs/` volume persists assessment artifacts across container restarts. The image has no runtime network dependency — only the browser needs access to port 8501.
+## Vercel (Demo)
+
+The Streamlit UI is also deployed as a read-only demo on Vercel:
+
+- **https://sherlog-sih.vercel.app/**
+
+The Vercel build uses `api.py` → `streamlit.starlette.App("app.py")` as an ASGI entrypoint. The demo renders the full workbench UI but cannot run assessments (no persistent filesystem in serverless). Use the Docker or local install for full functionality.
+
 
 ## Supervisory Workbench
 
