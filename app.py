@@ -1407,7 +1407,11 @@ def _command_output_excerpt(output: str, limit=12_000) -> str:
 
 def run_pipeline(name: str, mode: str, params: dict, uploads: dict):
     rd = RUNS_DIR / name
-    (rd / "results").mkdir(parents=True, exist_ok=True)
+    try:
+        (rd / "results").mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        st.error(f"Cannot create run directory: {e}. This environment may not support persistent filesystem writes.")
+        st.stop()
     src, norm, res = rd / "source", rd / "normalized", rd / "results"
     cfgp = (APP_DIR / params["config"]) if params.get("config") else None
     config, config_source = effective_detector_config(cfgp)
@@ -1590,7 +1594,7 @@ def render_run_page():
                       anomaly=float(ss.pf_anom), seed=int(ss.pf_seed),
                       adaptive=bool(ss.pf_adaptive), batch=int(ss.pf_batch),
                       workers=int(ss.pf_workers), hc=int(ss.pf_hc), config=ss.pf_cfg)
-        can_start = bool(safe) and not (RUNS_DIR / safe).exists()
+        can_start = bool(safe) and not (RUNS_DIR / safe).exists() and _detect_cli() is not None
     else:
         files = st.file_uploader("Upload the five submission CSVs (entities, assets, alerts, "
                                  "cases, escalations — cases/escalations may be header-only "
@@ -1621,7 +1625,7 @@ def render_run_page():
                 except Exception as e:
                     info.append(dict(table=stem, rows="—", missing_required_cols=str(e)[:80]))
             show_table(pd.DataFrame(info), hide_index=True)
-        can_start = present == set(RUN_TABLES) and bool(safe) and not (RUNS_DIR / safe).exists()
+        can_start = present == set(RUN_TABLES) and bool(safe) and not (RUNS_DIR / safe).exists() and _detect_cli() is not None
         if not can_start:
             st.info("Validation is enabled only once all five logical tables are present "
                     "(spec: intake requires all five, even if cases/escalations are empty).")
