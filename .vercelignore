@@ -7,3 +7,6 @@ adaptive_test/
 compose.yaml
 Dockerfile
 .dockerignore
+.sat_sa.egg-info/
+sat_sa.egg-info/
+.git/
