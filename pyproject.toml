@@ -32,4 +32,4 @@ include = ["sat_sa*"]
 testpaths = ["tests"]
 
 [tool.vercel]
-entrypoint = "sat_sa.cli:app"
+entrypoint = "app:app"
