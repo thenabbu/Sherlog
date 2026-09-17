@@ -21,8 +21,8 @@ RUN python -m pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /app/runs \
     && chown -R appuser:appuser /app
 
-COPY detector_config.yaml z.py ./
-RUN chown appuser:appuser /app/detector_config.yaml /app/z.py
+COPY detector_config.yaml app.py ./
+RUN chown appuser:appuser /app/detector_config.yaml /app/app.py
 
 USER appuser
 
@@ -30,4 +30,4 @@ EXPOSE 8501
 
 VOLUME ["/app/runs"]
 
-ENTRYPOINT ["streamlit", "run", "z.py"]
+ENTRYPOINT ["streamlit", "run", "app.py"]

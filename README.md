@@ -1,96 +1,113 @@
-# SAT-SA CLI MVP
+# Sherlog
 
-An offline-first Python library and CLI for supervising SOC alert/case-management submissions. It identifies execution gaps and negative space, ranks CSEs for manual review, and preserves the evidence that produced every finding.
+**Supervisory Analytics Tool for SOC Assessment** — an offline-first Python toolkit for auditing SOC alert and case-management submissions. Sherlog identifies execution gaps and negative space in security operations, ranks entities for manual review, and preserves full evidence trails for every finding.
 
-For a replication-grade description of the implemented program, see [the specification set](docs/spec/README.md). It defines the data contracts, all command behaviour, detector equations, evidence/report formats, streaming/adaptive runtime policy, deployment, and test protocol.
+## Features
 
-## Air-gapped installation
+- **13 detection rules** across two engines — execution gaps (D1–E11) and negative space (N1–N4)
+- **Offline & air-gapped** — zero network calls, no cloud services, no external dependencies
+- **Bounded-memory streaming** — processes millions of alerts without loading them into RAM
+- **Adaptive runtime** — auto-tunes batch size and worker count based on available CPU/RAM
+- **Evidence-attached findings** — every flag carries rationale, baselines, and source rows
+- **Interactive Streamlit workbench** — portfolio triage, entity profiles, peer benchmarking, review queue, report generation
+- **CLI + library** — `satsa` console script or `python -m sat_sa.cli` for pipeline automation
 
-Build/download dependency wheels on an approved connected build machine, transfer the source and wheelhouse into the NCIIPC environment, then install without an index:
+## Quick Start
 
-```powershell
+```bash
+# Install
+pip install -r requirements.txt
+pip install -e .
+
+# Run the CLI
+satsa generate-synth --entities 25 --alerts-per-entity 400 --seed 42
+satsa ingest --input runs/synth/source --format csv
+satsa detect --data runs/synth/normalized --detectors execution_gaps,negative_space
+satsa score --flags runs/synth/results/flags.json
+satsa report --scores runs/synth/results/entity_scores.csv --flags runs/synth/results/flags.json
+
+# Launch the workbench
+streamlit run app.py
+```
+
+## Docker
+
+```bash
+docker build -t sherlog .
+docker run --rm -p 8501:8501 -v sherlog-runs:/app/runs sherlog
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose up --build -d
+```
+
+The `runs/` volume persists assessment artifacts across container restarts. The image has no runtime network dependency — only the browser needs access to port 8501.
+
+## Supervisory Workbench
+
+The Streamlit UI (`app.py`) is a presentation layer over the CLI — it never duplicates analytics. Pages include:
+
+- **Run assessment** — Generate synthetic data or upload CSV submissions
+- **Portfolio overview** — Cross-entity triage with risk scores, sparklines, filters
+- **Entity profile** — Deep-dive into one entity — alerts, coverage, findings, history
+- **Findings feed** — All flagged findings split by engine (EG / NS), with filters
+- **Peer benchmarking** — Sector-scoped box plots and percentile rankings
+- **Review queue** — Examiner's prioritized to-do list
+- **Data health** — Submission completeness matrix and ingestion quality
+- **Rules in effect** — Read-only view of all detector rules and thresholds
+- **Report center** — Markdown/HTML/CSV/JSON report generation with export
+- **How it works** — Pipeline diagram, host profile, synthetic validation
+
+Deep links: `?page=findings&run=<name>&entity=CSE-003&finding=fg_00012`
+
+## Air-Gapped Installation
+
+On an approved connected build machine, download dependency wheels, then transfer source + wheelhouse:
+
+```bash
+pip download -r requirements.txt -d wheelhouse/
+# Transfer wheelhouse/ and repo to the air-gapped host
 pip install --no-index --find-links=./wheelhouse -r requirements.txt
 pip install --no-index --find-links=./wheelhouse -e .
 ```
 
-There are no network calls, cloud services, SaaS dependencies, databases, or external models in SAT-SA.
+## Architecture
 
-## Demo pipeline
-
-```powershell
-satsa system-info
-satsa generate-synth --entities 25 --alerts-per-entity 400 --seed 42 --batch-size 0 --out data/synth
-satsa ingest --input data/synth --format csv --batch-size 0 --workers 0 --out data/normalized
-satsa detect --data data/normalized --detectors execution_gaps,negative_space --config detector_config.yaml --batch-size 0 --workers 0 --out results/flags.json
-satsa score --flags results/flags.json --config detector_config.yaml --out results/entity_scores.csv
-satsa report --scores results/entity_scores.csv --flags results/flags.json --format table --out results/report.json
-satsa validate --flags results/flags.json --synth-ground-truth data/synth/ground_truth.parquet
+```
+app.py (Streamlit UI)
+  └── sat_sa/
+        ├── cli.py          — Typer CLI orchestration
+        ├── schema.py       — Pydantic data contracts
+        ├── ingestion/      — CSV/JSON → Parquet normalization
+        ├── detectors/
+        │   ├── execution_gaps.py  — D1 fast closure, D2 no escalation, E1–E11
+        │   ├── negative_space.py  — D3 low coverage, N1–N4
+        │   └── registry.py        — Detector registry + grouping
+        ├── evidence/       — Source row attachment
+        ├── peer/           — Peer cohort statistics
+        ├── scoring/        — Entity risk scoring + ranking
+        ├── synth/          — Deterministic synthetic data generator
+        └── runtime.py      — Adaptive batch/worker tuning
 ```
 
-## Supervisory workbench UI
+For a detailed specification set, see [docs/spec/](docs/spec/).
 
-The optional Streamlit interface is a presentation layer over the same local artifacts and CLI implementation; it does not duplicate analytics. Install the declared dependencies, then run:
+## Data Contract
 
-```powershell
-streamlit run z.py
-```
+Input CSV/JSON files: `entities`, `assets`, `alerts`, `cases`, `escalations`. Every row is Pydantic-validated; invalid rows go to `rejects.json` with source, row number, and error message.
 
-The UI keeps each showcase in `runs/<run-name>/`. On its **Run assessment** page, choose either a synthetic preset or upload the five CSV exports; one Start action automatically validates, analyses, ranks, and publishes the local result set for review.
+## Large Submissions
 
-`generate-synth` produces both CSV (for the explicit ingestion stage) and parquet. Ground truth is only used by `validate`; detectors never read it.
+Pass `--batch-size 0 --workers 0` (the default) to auto-detect optimal settings based on CPU count and available RAM. Adaptive mode (default) adjusts batch size and worker count dynamically under memory pressure. Use `--no-adaptive` for reproducible fixed settings.
 
-## Docker deployment
+## Testing
 
-The image runs the current Streamlit workbench from `z.py`, includes the `satsa` CLI,
-and stores generated assessment runs under `/app/runs`. The image has no runtime
-network dependency; the browser only needs access to the Streamlit HTTP port.
-
-Build and run it with a persistent named volume:
-
-```powershell
-docker build -t satsa:latest .
-docker run --rm -p 8501:8501 -v satsa-runs:/app/runs satsa:latest
-```
-
-Open <http://localhost:8501>. For a repeatable local deployment using Compose:
-
-```powershell
-docker compose up --build -d
-docker compose logs -f satsa
-docker compose down
-```
-
-To move the application to another host, transfer the repository (or publish the
-image to an approved registry), then run the same `docker run` command. The
-`runs/` volume is separate from the image so rebuilding or replacing the
-container does not remove assessment artifacts.
-
-## Large submissions
-
-`generate-synth`, CSV `ingest`, and `detect` process alerts in bounded batches and display progress plus elapsed time. Passing `--batch-size 0 --workers 0` (the default) detects local CPU count and currently available RAM, then starts aggressively: 10,000 rows below 1 GB free RAM, 50,000 below 4 GB, 100,000 below 8 GB, otherwise 200,000. It uses up to 12 workers (CPU count minus two) whenever at least 768 MB is available. Run `satsa system-info` to inspect the choice before starting a large job.
-
-Adaptive mode is enabled by default. Every four completed batches (`--healthcheck-interval`) SAT-SA checks currently available RAM, host CPU, and recent throughput locally. Under pressure it halves the next batch and reduces admitted workers; with sustained headroom it grows the next batch by up to 25% and increases parallel admission. Use `--no-adaptive` for fixed, previous-style batch and worker settings. Explicit `--batch-size`/`--workers` values are initial values; adaptive mode may change them. Its lower batch bound is `min(1,000, initial batch size)`.
-
-The CLI does **not** hold the complete alert dataset in memory: generation writes each batch directly to CSV/parquet; ingestion validates and writes each CSV chunk as a parquet row group, with a bounded process pool; detection makes two parquet scans and retains only closure-duration statistics on temporary disk, per-entity/asset counters, and resulting flags. Independent execution-gap detectors run concurrently within each batch when more than one worker is selected. For very large data, use CSV inputs (standard JSON arrays are still loaded as one document; NDJSON support is a future enhancement).
-
-## Data contract
-
-The CSV/JSON table files are named `entities`, `assets`, `alerts`, `cases`, and `escalations`, and use the fields defined in `sat_sa/schema.py`. Every input row is Pydantic-validated. Invalid rows appear, with source, row number, original record, and validation error, in `rejects.json` rather than being silently ignored.
-
-## Included MVP signals
-
-- Fast closure: IQR lower-fence outliers among high/critical alerts.
-- Critical true-positive without escalation: direct, explainable rule.
-- Low critical-asset coverage: recent alert counts under 25% of the peer-cohort median.
-- Peer benchmarking: reusable median, Q1/Q3/IQR, and percentile calculations.
-
-Each flag has its detector, entity, rationale, exact source IDs, baseline values, and embedded source rows. Entity risk is weighted flag count divided by `log(1 + alert volume)`; ties prefer broader weakness across detector types.
-
-## Quality checks
-
-```powershell
+```bash
 pytest
-rg -n "requests|urllib|socket" sat_sa
 ```
 
-The second check is the proposed offline-deployment lint gate: it should return no results.
+## License
+
+MIT
