@@ -2654,7 +2654,7 @@ supervisory review (this workbench: dispositions, queue, reports)
     st.subheader("The three supervisory signals")
     show_table(pd.DataFrame([dict(
         Rule=RULE_META[d]["rule"], Question=RULE_META[d]["desc"],
-        Method=RULE_META[d]["method"], Evidence=RULE_META[d]["threshold"],
+        Method=RULE_META[d]["method"], Evidence=RULE_META[d].get("threshold", "—"),
         Family=family_label(RULE_META[d]["family"])
     ) for d in RULE_META]), hide_index=True)
 
