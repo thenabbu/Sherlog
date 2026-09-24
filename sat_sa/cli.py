@@ -16,6 +16,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import typer
 import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
@@ -28,7 +29,7 @@ from sat_sa.detectors import (
     detect_missing_investigation_evidence, detect_recurrence_without_root_cause,
     detect_short_investigation, detect_workload_severity_mismatch,
 )
-from sat_sa.evidence import attach_evidence
+from sat_sa.evidence import attach_evidence, build_lookups
 from sat_sa.ingestion import FieldMapping, RawTable, normalize, normalize_table
 from sat_sa.schema import Flag, SCHEMAS
 from sat_sa.scoring import score_entities
@@ -104,14 +105,26 @@ def _normalize_chunk(chunk: pd.DataFrame, source: str, name: str) -> tuple[pd.Da
 
 
 def _load_flags(path: Path) -> list[Flag]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"Flags file {path} is not valid JSON: {exc}")
     rows = payload["flags"] if isinstance(payload, dict) and "flags" in payload else payload
-    return [Flag.model_validate(row) for row in rows]
+    if not isinstance(rows, list):
+        raise typer.BadParameter(f"Flags file {path} is malformed: expected a JSON list of flags (or an object with a 'flags' key), got {type(rows).__name__}.")
+    try:
+        return [Flag.model_validate(row) for row in rows]
+    except ValidationError as exc:
+        raise typer.BadParameter(f"Flags file {path} contains invalid flag records: {exc.errors(include_url=False)[:3]}")
 
 
 def _write_flags(path: Path, flags: list[Flag]) -> None:
     _mkdir(path.parent)
-    path.write_text(json.dumps([flag.as_json() for flag in flags], indent=2), encoding="utf-8")
+    # Atomic write: write to temp file then rename to prevent corruption
+    # if the process is interrupted mid-write.
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps([flag.as_json() for flag in flags], indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 @app.command("generate-synth")
@@ -170,19 +183,15 @@ def ingest(
     ingested = set()
     rejected_rows = 0
     reject_path = out / "rejects.json"
-    with reject_path.open("w", encoding="utf-8") as reject_file, _progress() as progress:
-        reject_file.write("[")
-        first_reject = True
+    reject_tmp = out / "rejects.json.tmp"
+    reject_entries: list[dict] = []
+    with _progress() as progress:
         task = progress.add_task("Validating and normalizing input", total=None)
 
         def record_rejects(rows: list[dict]) -> None:
-            nonlocal first_reject, rejected_rows
-            for row in rows:
-                if not first_reject:
-                    reject_file.write(",\n")
-                json.dump(row, reject_file, default=str)
-                first_reject = False
-                rejected_rows += 1
+            nonlocal rejected_rows
+            reject_entries.extend(rows)
+            rejected_rows += len(rows)
 
         for source in files:
             name = source.stem
@@ -232,7 +241,7 @@ def ingest(
                             consume_next()
                     else:
                         # At most ``workers`` chunks are in flight, bounding RAM.
-                        with ProcessPoolExecutor(max_workers=4 if adaptive else settings.workers) as executor:
+                        with ProcessPoolExecutor(max_workers=controller.workers) as executor:
                             for chunk in chunks():
                                 pending.append((len(chunk), time.perf_counter(), executor.submit(_normalize_chunk, chunk, str(source), name)))
                                 if len(pending) >= controller.workers:
@@ -249,7 +258,12 @@ def ingest(
             if not wrote_rows:
                 pd.DataFrame(columns=list(SCHEMAS[name].model_fields)).to_parquet(target, index=False)
             ingested.add(name)
-        reject_file.write("]")
+    # Atomic write: write to temp file then rename, so reject_path is never malformed.
+    if reject_entries:
+        reject_tmp.write_text(json.dumps(reject_entries, indent=2, default=str), encoding="utf-8")
+        reject_tmp.replace(reject_path)
+    elif reject_path.exists():
+        reject_path.unlink()
     missing = set(SCHEMAS) - ingested
     if missing:
         raise typer.BadParameter(f"Input submission is missing tables: {sorted(missing)}")
@@ -276,8 +290,40 @@ def detect(
                 "investigation_duration_k": 1.5, "low_entity_activity_pct": .25,
                 "recurrence_min_alerts": 3, "workload_deviation_pct": .5,
                 "min_peer_sample": 4}
+    # Validate config values are within sane bounds to prevent silent misanalysis.
+    _CONFIG_BOUNDS = {
+        "fast_closure_k": (0.1, 10.0),
+        "coverage_window_days": (1, 3650),
+        "coverage_threshold_pct": (0.0, 1.0),
+        "investigation_duration_k": (0.1, 10.0),
+        "low_entity_activity_pct": (0.0, 1.0),
+        "recurrence_min_alerts": (1, 100),
+        "workload_deviation_pct": (0.0, 5.0),
+        "min_peer_sample": (1, 1000),
+    }
     if config:
-        settings.update(yaml.safe_load(config.read_text(encoding="utf-8")) or {})
+        try:
+            loaded = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise typer.BadParameter(f"Invalid YAML in config file: {exc}")
+        # Validate and coerce config values to expected types at load time,
+        # preventing raw ValueError crashes deep in the pipeline.
+        for key in list(loaded.keys()):
+            if key == "weights":
+                continue
+            if key in _CONFIG_BOUNDS:
+                try:
+                    loaded[key] = float(loaded[key])
+                except (TypeError, ValueError):
+                    raise typer.BadParameter(f"Config value '{key}' must be a number, got {type(loaded[key]).__name__}: {loaded[key]!r}")
+        settings.update(loaded)
+    for key, (lo, hi) in _CONFIG_BOUNDS.items():
+        try:
+            val = float(settings[key])
+        except (TypeError, ValueError, KeyError):
+            continue
+        if not (lo <= val <= hi):
+            raise typer.BadParameter(f"Config value '{key}'={val} is outside valid range [{lo}, {hi}]")
     settings_runtime = choose_runtime_settings(batch_size, workers)
     console.print(_runtime_line(settings_runtime))
     controller = AdaptiveController(settings_runtime, adaptive, healthcheck_interval)
@@ -286,13 +332,23 @@ def detect(
     for required in (alert_path, entity_path, asset_path):
         if not required.exists():
             raise typer.BadParameter(f"Missing required normalized data file: {required}")
-    entities = pd.read_parquet(entity_path)
-    assets = pd.read_parquet(asset_path).merge(entities[["entity_id", "peer_group"]], on="entity_id", how="left")
+    # Fail fast with a clean error when a normalized artifact is unreadable
+    # (truncated file, wrong format, not parquet at all) instead of a raw
+    # pyarrow traceback deep inside the scan.
+    try:
+        entities = pd.read_parquet(entity_path)
+        assets = pd.read_parquet(asset_path)
+        alert_total = pq.ParquetFile(alert_path).metadata.num_rows
+    except (OSError, ValueError, pa.ArrowInvalid, pa.ArrowIOError) as exc:
+        raise typer.BadParameter(
+            f"Normalized data in {data} is unreadable: {exc}. "
+            "Re-run 'ingest' to regenerate the parquet files.")
+    assets = assets.merge(entities[["entity_id", "peer_group"]], on="entity_id", how="left")
     cases = pd.read_parquet(data / "cases.parquet") if (data / "cases.parquet").exists() else pd.DataFrame()
     escalations = pd.read_parquet(data / "escalations.parquet") if (data / "escalations.parquet").exists() else pd.DataFrame()
     case_ids = set(cases["case_id"].astype(str)) if not cases.empty else set()
     escalation_alert_ids = set(escalations["alert_id"].astype(str)) if not escalations.empty else set()
-    total_rows = pq.ParquetFile(alert_path).metadata.num_rows
+    total_rows = alert_total
     started = time.perf_counter()
     flags: list[Flag] = []
     volumes: Counter[str] = Counter()
@@ -336,8 +392,8 @@ def detect(
             for severity, path in duration_paths.items():
                 count = path.stat().st_size // 8 if path.exists() else 0
                 if count:
-                    values = np.memmap(path, dtype=np.float64, mode="r+", shape=(count,))
-                    q1, q3 = np.quantile(values, [.25, .75], overwrite_input=True)
+                    values = np.memmap(path, dtype=np.float64, mode="r", shape=(count,))
+                    q1, q3 = np.quantile(values, [.25, .75])
                     baselines.append({"severity": severity, "q1": float(q1), "iqr": float(q3 - q1), "sample_size": int(count)})
                     del values
         stats = pd.DataFrame(baselines, columns=["severity", "q1", "iqr", "sample_size"])
@@ -347,6 +403,8 @@ def detect(
             task = progress.add_task("Pass 2/2: detecting supervisory signals", total=total_rows)
             for batch in _alert_batches(alert_path, lambda: controller.batch_size):
                 batch_started = time.perf_counter()
+                batch_src = {"alerts": batch, "cases": cases, "escalations": escalations}
+                batch_lookups = build_lookups(batch_src)
                 if "execution_gaps" in selected:
                     if controller.workers > 1:
                         # These rules do not depend on one another; threads share
@@ -362,10 +420,10 @@ def detect(
                     batch_flags.extend(detect_investigation_closure_mismatch(batch, cases))
                     batch_flags.extend(detect_high_risk_no_escalation(batch))
                     batch_flags.extend(detect_short_investigation(batch, cases, entities, float(settings["investigation_duration_k"]), int(settings["min_peer_sample"])))
-                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in batch_flags)
+                    flags.extend(attach_evidence(flag, batch_src, batch_lookups) for flag in batch_flags)
                 if "negative_space" in selected:
-                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in detect_missing_investigation_evidence(batch, case_ids))
-                    flags.extend(attach_evidence(flag, {"alerts": batch, "cases": cases, "escalations": escalations}) for flag in detect_missing_escalation_evidence(batch, escalation_alert_ids))
+                    flags.extend(attach_evidence(flag, batch_src, batch_lookups) for flag in detect_missing_investigation_evidence(batch, case_ids))
+                    flags.extend(attach_evidence(flag, batch_src, batch_lookups) for flag in detect_missing_escalation_evidence(batch, escalation_alert_ids))
                 if "negative_space" in selected and window_start is not None:
                     dates = pd.to_datetime(batch["created_at"], utc=True)
                     recent = batch[(dates >= window_start) & (dates <= reference)]
@@ -375,8 +433,10 @@ def detect(
         if "negative_space" in selected:
             count_frame = pd.DataFrame([{"entity_id": entity, "asset_id": asset, "observed_count": count} for (entity, asset), count in observed.items()], columns=["entity_id", "asset_id", "observed_count"])
             coverage_flags = detect_low_critical_asset_coverage_from_counts(count_frame, assets, reference if reference is not None else pd.Timestamp.now(tz="UTC"), window_days=window_days, threshold_pct=float(settings["coverage_threshold_pct"]))
-            flags.extend(attach_evidence(flag, {"assets": assets}) for flag in coverage_flags)
-            flags.extend(attach_evidence(flag, {"assets": assets}) for flag in detect_critical_asset_no_telemetry(count_frame, assets, reference if reference is not None else pd.Timestamp.now(tz="UTC"), window_days=window_days))
+            ns_src = {"assets": assets}
+            ns_lookups = build_lookups(ns_src)
+            flags.extend(attach_evidence(flag, ns_src, ns_lookups) for flag in coverage_flags)
+            flags.extend(attach_evidence(flag, ns_src, ns_lookups) for flag in detect_critical_asset_no_telemetry(count_frame, assets, reference if reference is not None else pd.Timestamp.now(tz="UTC"), window_days=window_days))
             activity = pd.DataFrame([{"entity_id": entity, "alert_count": count} for entity, count in entity_alerts.items()])
             flags.extend(detect_low_entity_activity(activity, entities, float(settings["low_entity_activity_pct"]), int(settings["min_peer_sample"])))
         if "execution_gaps" in selected:
@@ -390,13 +450,19 @@ def detect(
             recurrence_input = pd.DataFrame(recurrence_rows, columns=["entity_id", "asset_id", "alert_id", "case_id"])
             recurrence_flags = detect_recurrence_without_root_cause(recurrence_input, cases, int(settings["recurrence_min_alerts"])) if not recurrence_input.empty else []
             recurrence_alerts = pd.DataFrame([row for item in recurring.values() for row in item["alert_rows"]])
-            flags.extend(attach_evidence(flag, {"alerts": recurrence_alerts, "cases": cases, "assets": assets}) for flag in recurrence_flags)
+            rec_src = {"alerts": recurrence_alerts, "cases": cases, "assets": assets}
+            rec_lookups = build_lookups(rec_src)
+            flags.extend(attach_evidence(flag, rec_src, rec_lookups) for flag in recurrence_flags)
             workload = pd.DataFrame([{"entity_id": entity, "high_critical_tp": count} for entity, count in entity_high_critical_tp.items()])
             flags.extend(detect_workload_severity_mismatch(workload, cases, entities, float(settings["workload_deviation_pct"]), int(settings["min_peer_sample"])))
     # IDs are globally unique after multiple detector modules independently create flags.
     flags = [flag.model_copy(update={"flag_id": f"fg_{index:05d}"}) for index, flag in enumerate(flags, 1)]
     _write_flags(out, flags)
-    (out.parent / "alert_volumes.json").write_text(json.dumps({entity: int(count) for entity, count in volumes.items()}, indent=2), encoding="utf-8")
+    # Atomic write for volumes: temp file + rename prevents partial state on interruption.
+    vol_path = out.parent / "alert_volumes.json"
+    vol_tmp = vol_path.with_suffix(".json.tmp")
+    vol_tmp.write_text(json.dumps({entity: int(count) for entity, count in volumes.items()}, indent=2), encoding="utf-8")
+    vol_tmp.replace(vol_path)
     console.print(f"Detected [bold]{len(flags)}[/bold] flags; evidence written to {out} in {time.perf_counter() - started:.1f}s (final batch size {controller.batch_size:,}, workers {controller.workers}; adaptive={'on' if adaptive else 'off'}).")
 
 
@@ -430,7 +496,16 @@ def score(
     volume_path = flags.parent / "alert_volumes.json"
     volumes = json.loads(volume_path.read_text(encoding="utf-8")) if volume_path.exists() else {}
     settings = yaml.safe_load(config.read_text(encoding="utf-8")) if config else {}
-    scores = score_entities(loaded, volumes, (settings or {}).get("weights"))
+    weights = (settings or {}).get("weights")
+    if weights and isinstance(weights, dict):
+        for k, v in weights.items():
+            try:
+                w = float(v)
+            except (TypeError, ValueError):
+                continue
+            if not (0.0 <= w <= 100.0):
+                raise typer.BadParameter(f"Weight '{k}'={w} is outside valid range [0, 100]")
+    scores = score_entities(loaded, volumes, weights)
     _mkdir(out.parent); scores.to_csv(out, index=False)
     console.print(f"Scored {len(scores)} entities in {out}")
 
@@ -446,6 +521,10 @@ def report(
     if format not in {"json", "table"}:
         raise typer.BadParameter("format must be json or table")
     score_frame = pd.read_csv(scores)
+    required_cols = {"entity_id", "risk_score", "priority_rank"}
+    missing_cols = required_cols - set(score_frame.columns)
+    if missing_cols:
+        raise typer.BadParameter(f"Scores file {scores} is missing required columns: {sorted(missing_cols)}. Re-run 'score' to regenerate it.")
     loaded = _load_flags(flags)
     entities = []
     for _, score_row in score_frame.iterrows():

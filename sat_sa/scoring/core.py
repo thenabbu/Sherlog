@@ -21,7 +21,10 @@ def score_entities(flags: list[Flag], alert_volume_by_entity: dict[str, int], we
         counts: dict[str, int] = {}
         for flag in own_flags:
             counts[flag.detector] = counts.get(flag.detector, 0) + 1
-        volume = int(alert_volume_by_entity.get(entity_id, 0))
+        try:
+            volume = max(0, int(alert_volume_by_entity.get(entity_id, 0)))
+        except (TypeError, ValueError):
+            volume = 0
         numerator = sum(weights.get(detector, 1) * count for detector, count in counts.items())
         records.append({"entity_id": entity_id, "risk_score": numerator / math.log(1 + volume) if volume else float(numerator),
                         "alert_volume": volume, "flag_count_by_detector": json.dumps(counts, sort_keys=True),

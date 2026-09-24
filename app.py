@@ -336,11 +336,39 @@ def styler_map(styler, fn, subset=None):
     return styler.applymap(fn) if subset is None else styler.applymap(fn, subset=subset)
 
 
+_CORRUPT_JSON: dict[str, str] = {}  # path -> decode error, for honest empty-state messages
+
+
 def _read_json(p: Path, default):
-    try:
-        return json.loads(Path(p).read_text(encoding="utf-8"))
-    except Exception:
+    path = Path(p)
+    if str(path) in _CORRUPT_JSON:
         return default
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError:
+        return default
+    except json.JSONDecodeError as exc:
+        _CORRUPT_JSON[str(path)] = str(exc)
+        return default
+    # Type guard: every call site passes a default whose type matches the
+    # artifact contract (dict for volumes/meta, list for flags/rejects/queue).
+    # A hand-edited or half-legacy file holding valid JSON of the wrong shape
+    # would otherwise crash pages with AttributeError on `.get`/iteration.
+    if type(value) is not type(default):
+        _CORRUPT_JSON[str(path)] = (
+            f"expected {type(default).__name__}, found {type(value).__name__}")
+        return default
+    return value
+
+
+def corrupt_json_note(prefix: str) -> str | None:
+    """Return a warning line if any artifact under `prefix` failed to parse."""
+    hits = [p for p in _CORRUPT_JSON if p.startswith(str(prefix))]
+    if not hits:
+        return None
+    return ("⚠️ One or more result files for this cycle are damaged or unreadable "
+            f"({len(hits)} file(s), e.g. {Path(hits[0]).name}). The lists below may be "
+            "incomplete — re-run the pipeline to regenerate them.")
 
 
 def effective_detector_config(config_path: Path | None) -> tuple[dict, str]:
@@ -403,11 +431,15 @@ def run_cli(args) -> dict:
                             + ", ".join(unsupported) + "."))
     t0 = time.time()
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         out = r.stdout or ""
         if r.stderr:
             out += "\n[stderr]\n" + r.stderr
         return dict(ok=(r.returncode == 0), returncode=r.returncode, output=out,
+                    elapsed=time.time() - t0, cmd=cmd)
+    except subprocess.TimeoutExpired:
+        return dict(ok=False, returncode=-1,
+                    output=f"CLI command timed out after 1800 seconds: {' '.join(cmd)}",
                     elapsed=time.time() - t0, cmd=cmd)
     except Exception as e:
         return dict(ok=False, returncode=-1, output=f"Subprocess error: {e}",
@@ -491,7 +523,21 @@ def load_meta(run_dir: str) -> dict:
 
 @st.cache_data
 def load_flags(run_dir: str) -> list:
-    return _read_json(art(run_dir)["flags"], [])
+    raw = _read_json(art(run_dir)["flags"], [])
+    # Sanitize: entries must be dicts and `evidence` (when present) must be a
+    # dict — flags.json is a run artifact that can be hand-edited or restored
+    # from a partial backup; every consumer does f.get(...)/ev.get(...).
+    flags = []
+    for f in raw:
+        if not isinstance(f, dict):
+            continue
+        if "evidence" in f and not isinstance(f["evidence"], dict):
+            f = {**f, "evidence": {}}
+        flags.append(f)
+    if len(flags) != len(raw):
+        _CORRUPT_JSON[str(art(run_dir)["flags"])] = (
+            f"{len(raw) - len(flags)} malformed flag entries skipped")
+    return flags
 
 
 @st.cache_data
@@ -716,6 +762,11 @@ def entity_metrics(run_dir: str) -> pd.DataFrame:
         if dfidx is None or e not in dfidx.index or col not in dfidx.columns:
             return default
         v = dfidx.at[e, col]
+        # Duplicate entity_id rows make the index non-unique; .at then returns
+        # a Series. Take the first non-null value instead of an ambiguous bool.
+        if isinstance(v, pd.Series):
+            v = v.dropna()
+            return default if v.empty else v.iloc[0]
         return default if pd.isna(v) else v
 
     rows = []
@@ -910,7 +961,14 @@ def load_queue(run_dir: str) -> list:
 def save_queue(run_dir: str, items: list):
     p = queue_path(run_dir)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    # Guard against a corrupted target (e.g. a directory occupying the path)
+    # which would crash the whole UI instead of reporting the problem.
+    if p.exists() and not p.is_file():
+        raise OSError(f"Cannot write review queue: {p} exists and is not a file.")
+    # Atomic write: temp file + rename prevents a torn queue on interruption.
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(items, indent=2), encoding="utf-8")
+    tmp.replace(p)
 
 
 def _queue_priority(sev: str, risk: float, recurring: bool = False) -> float:
@@ -940,7 +998,10 @@ def add_finding_to_queue(run_dir: str, f: dict, recurring: bool = False) -> tupl
         priority=_queue_priority(sev, risk, recurring),
         status="To review", assignee="", added_at=now_iso(),
     ))
-    save_queue(run_dir, items)
+    try:
+        save_queue(run_dir, items)
+    except OSError as exc:
+        return False, f"Could not save review queue: {exc}"
     return True, f"{fid} added to the review queue."
 
 
@@ -1107,7 +1168,7 @@ for _key, _default in {
 try:
     _p = st.query_params
     if _p.get("run"):
-        ss.active_run = _p["run"]
+        ss.active_run = sanitize_run_name(_p["run"])
     if _p.get("page") in PAGES:
         ss.nav_page = _p["page"]
     if _p.get("entity"):
@@ -1258,6 +1319,9 @@ def render_findings_table(run_dir: str, entity_id=None, family=None, filters=Non
     """Reusable findings-feed component (spec §3.3) — table + row actions + dialog link."""
     df = findings_view(run_dir)
     if df.empty:
+        note = corrupt_json_note(str(Path(run_dir) / "results"))
+        if note:
+            st.warning(note)
         st.info("No findings in this cycle. Run detection from Run assessment, "
                 "or loosen the filters.")
         return
@@ -1414,6 +1478,15 @@ def run_pipeline(name: str, mode: str, params: dict, uploads: dict):
         st.stop()
     src, norm, res = rd / "source", rd / "normalized", rd / "results"
     cfgp = (APP_DIR / params["config"]) if params.get("config") else None
+    # SECURITY: Ensure config path cannot escape the application directory.
+    if cfgp is not None:
+        try:
+            cfgp = cfgp.resolve(strict=False)
+        except (OSError, ValueError):
+            cfgp = None
+        if cfgp is not None and not (cfgp == APP_DIR or str(cfgp).startswith(str(APP_DIR) + os.sep) or str(cfgp).startswith(str(APP_DIR) + "/")):
+            st.error(f"Config path must be within the application directory. Rejected: {params['config']}")
+            return
     config, config_source = effective_detector_config(cfgp)
     meta = dict(name=name, mode=mode, created=now_iso(), steps=[], params=params,
                 effective_detector_config=config,
@@ -1665,10 +1738,19 @@ def portfolio_frame(run_dir: str):
         sector = "—"
         peer = "—"
         if emap is not None:
+            # Duplicate entity_id rows make emap's index non-unique; .at then
+            # returns a Series — coerce to a scalar (first non-null) or the
+            # string conversion below would raise an ambiguous-truth error.
             if "sector" in emap.columns and e in emap.index:
                 sector = emap.at[e, "sector"]
+                if isinstance(sector, pd.Series):
+                    sector = sector.dropna()
+                    sector = sector.iloc[0] if len(sector) else "—"
             if "peer_group" in emap.columns and e in emap.index:
                 peer = emap.at[e, "peer_group"]
+                if isinstance(peer, pd.Series):
+                    peer = peer.dropna()
+                    peer = peer.iloc[0] if len(peer) else "—"
         h = hist[hist["entity_id"] == e].sort_values("cycle_order") if not hist.empty else pd.DataFrame()
         trend = [round(float(v), 3) for v in h["risk_score"].tail(4)] if len(h) else [round(risk, 3)]
         rank = int(srow["priority_rank"]) if (srow is not None and pd.notna(srow["priority_rank"])) else None
@@ -1832,10 +1914,19 @@ def render_entity_page(run_dir: str):
             pass
 
     emap = ent.set_index("entity_id") if not ent.empty else None
-    sector = str(emap.at[eid, "sector"]) if (emap is not None and "sector" in emap.columns
-                                             and eid in emap.index) else "—"
-    peer = str(emap.at[eid, "peer_group"]) if (emap is not None and "peer_group" in emap.columns
-                                               and eid in emap.index) else "—"
+
+    def _first(v, default="—"):
+        """Duplicate entity_id rows make .at return a Series — take the first value."""
+        if isinstance(v, pd.Series):
+            v = v.dropna()
+            return default if v.empty else v.iloc[0]
+        return default if pd.isna(v) else v
+
+    sector = _first(emap.at[eid, "sector"]) if (emap is not None and "sector" in emap.columns
+                                                and eid in emap.index) else "—"
+    peer = _first(emap.at[eid, "peer_group"]) if (emap is not None and "peer_group" in emap.columns
+                                                  and eid in emap.index) else "—"
+    sector, peer = str(sector), str(peer)
     srow = None
     if not scores.empty:
         s = scores[scores["entity_id"] == eid]
@@ -1938,8 +2029,11 @@ def render_entity_page(run_dir: str):
             alerts = alerts.copy()
             alerts["flagged"] = ["flagged" if str(a) in fmap else "" for a in alerts.get("alert_id", [])]
             alerts = alerts.sort_values("created_at", ascending=False) if "created_at" in alerts else alerts
-            n = st.slider("Rows displayed", 50, max(50, min(len(alerts), 5000)),
-                          min(500, len(alerts)), step=50, key=f"ea_n_{eid}")
+            # A slider needs min < max; entities with <=50 alerts would crash with
+            # StreamlitInvalidMinMaxError, so widen the top of the range instead.
+            slider_max = max(100, min(len(alerts), 5000))
+            n = st.slider("Rows displayed", 50, slider_max,
+                          min(slider_max, len(alerts), 500), step=50, key=f"ea_n_{eid}")
             adisp = alerts.head(n)
             show_cols = [c for c in ["alert_id", "severity", "category", "disposition",
                                      "escalated", "created_at", "first_ack_at", "closed_at",
@@ -1989,7 +2083,9 @@ def render_entity_page(run_dir: str):
         for _, r in a_e.iterrows():
             aid = str(r.get("asset_id"))
             crit = str(r.get("criticality", ""))
-            n = int(counts.get(aid, 0)) + int(counts.get(r.get("asset_id"), 0))
+            # Count once: `aid` is str() of the same value, so the previous
+            # counts.get(aid) + counts.get(raw) summed the same bucket twice.
+            n = int(counts.get(aid, 0))
             if crit == "critical":
                 if n == 0:
                     stt = "no telemetry"
@@ -2190,8 +2286,10 @@ def render_benchmark_page(run_dir: str):
         if rows:
             go("entity", entity=ids[rows[0]])
     if st.button("Findings for this sector"):
-        ss.findings_filter = {"sector_entities": None}
-        ss.findings_filter = {}
+        # The peer group is sector-scoped by design; filter the findings
+        # feed to its entities instead of navigating with no filter (the
+        # old code claimed "this sector" but showed everything).
+        ss.findings_filter = {"entities": sorted(set(sub["entity_id"]))}
         go("findings")
 
 
@@ -2202,6 +2300,20 @@ def render_queue_page(run_dir: str):
                "review, supervisory judgement stays human. Priority = severity weight "
                "(×1.5 if recurring) + risk ÷ 5. Status changes persist per cycle.")
     items = load_queue(run_dir)
+    # Keep only dict entries: hand-edited or legacy files may contain
+    # anything (strings, numbers, nulls) and every access below assumes dicts.
+    items = [it for it in items if isinstance(it, dict)]
+    # Duplicate ids (hand-edited or legacy queues) would collide Streamlit
+    # widget keys and crash the page — keep the newest entry per id.  Items
+    # missing an id entirely get a stable synthetic one so widget keys work.
+    _by_id: dict[str, dict] = {}
+    for _idx, _it in enumerate(items):
+        _key = str(_it.get("id") or _it.get("finding_id") or f"item_{_idx}")
+        _it = {**_it, "id": _key}
+        _prev = _by_id.get(_key)
+        if _prev is None or str(_it.get("added_at", "")) >= str(_prev.get("added_at", "")):
+            _by_id[_key] = _it
+    items = list(_by_id.values())
     c1, c2 = st.columns([1, 3])
     c1.metric("Items", len(items))
     if c2.button("Add all undisposed findings to queue"):
@@ -2216,16 +2328,27 @@ def render_queue_page(run_dir: str):
         st.info("Queue is empty. Add findings from the Findings feed (“Add to review "
                 "queue”), from a finding's detail dialog, or with the bulk button above.")
         return
-    for it in sorted(items, key=lambda x: -float(x.get("priority", 0))):
+    def _prio(item: dict) -> float:
+        """Priority for sorting/display; tolerant of missing or non-numeric values."""
+        try:
+            return abs(float(item.get("priority", 0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    for it in sorted(items, key=lambda x: -_prio(x)):
         with st.container(border=True):
             cc1, cc2, cc3, cc4, cc5 = st.columns([4, 1, 1.4, 1.4, 1])
             cc1.markdown(f"**{it.get('finding_id')}** · {esc(it.get('entity_id'))} · "
                          f"{severity_label(it.get('severity', ''))}")
             cc1.caption(f"{esc(it.get('reason', ''))} — ref {esc(it.get('ref', ''))}")
-            cc2.metric("Priority", f"{float(it.get('priority', 0)):.1f}")
+            cc2.metric("Priority", f"{_prio(it):.1f}")
             st_status = it.get("status", "To review")
-            cc3.selectbox("Status", ["To review", "In progress", "Done"],
-                          index=["To review", "In progress", "Done"].index(st_status),
+            _STATUSES = ["To review", "In progress", "Done"]
+            # Tolerate legacy/hand-edited statuses: fall back to 'To review'
+            # instead of crashing the whole queue page (list.index ValueError).
+            status_index = _STATUSES.index(st_status) if st_status in _STATUSES else 0
+            cc3.selectbox("Status", _STATUSES,
+                          index=status_index,
                           key=f"qs_{it['id']}", label_visibility="collapsed",
                           on_change=partial(_queue_field_cb, run_dir=run_dir,
                                             item_id=it["id"], field="status",
@@ -2261,6 +2384,10 @@ def health_matrix(run_dir: str) -> tuple[pd.DataFrame, list[str]]:
         if dfidx is None or e not in dfidx.index or col not in dfidx.columns:
             return default
         v = dfidx.at[e, col]
+        # Non-unique index (duplicate entity/case rows) yields a Series here.
+        if isinstance(v, pd.Series):
+            v = v.dropna()
+            return default if v.empty else v.iloc[0]
         return default if pd.isna(v) else v
 
     rows = []
@@ -2726,7 +2853,7 @@ def render_finding_detail(f: dict, run_dir: str):
                 st.markdown(f"Method: **{meta.get('method')}**")
                 show_table(pd.DataFrame(dict(quantity=[
                     "Observed time-to-close", "Severity baseline Q1", "IQR",
-                    f"Lower fence (Q1 − 1.5 × IQR)", "Outlier factor (Q1 ÷ observed)",
+                    "Lower fence (Q1 − 1.5 × IQR)", "Outlier factor (Q1 ÷ observed)",
                     "Baseline population"],
                     value=[fmt_minutes(obs), fmt_minutes(q1), fmt_minutes(iqr),
                            fmt_minutes(fence), f"{q1 / max(obs, 0.01):.1f}×",
@@ -2752,7 +2879,7 @@ def render_finding_detail(f: dict, run_dir: str):
                     "Threshold (25% of median)", "Window (days)",
                     "Reference window end", "Peer group"],
                     value=[f"{obs:.0f}", f"{med:.0f}", f"{0.25 * med:.1f}",
-                           str(ev.get("window_days", 30)), str(ev.get("reference", ev.get("reference_end", "—"))),
+                           str(ev.get("window_days", 30)), str(ev.get("window_end", "—")),
                            str(ev.get("peer_group", "—"))])), hide_index=True)
                 st.caption("A peer median of zero cannot produce a flag.")
             except (TypeError, ValueError):

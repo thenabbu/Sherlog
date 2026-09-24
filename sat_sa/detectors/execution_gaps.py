@@ -64,7 +64,8 @@ def detect_critical_no_escalation(alerts: pd.DataFrame) -> list[Flag]:
 def _case_index(cases: pd.DataFrame) -> dict:
     if cases is None or cases.empty:
         return {}
-    return cases.set_index("case_id").to_dict("index")
+    deduped = cases.drop_duplicates(subset=["case_id"], keep="first")
+    return deduped.set_index("case_id").to_dict("index")
 
 
 def detect_ack_without_meaningful_investigation(alerts: pd.DataFrame, cases: pd.DataFrame) -> list[Flag]:
